@@ -52,7 +52,7 @@ def test_invalid_port_number_raises_error():
     os.environ['BAIDUPCS_GO_PATH'] = './fake/BaiduPCS-Go.exe'
     os.environ['TEMP_DIR'] = './temp'
 
-    os.environ['SFTP_PORT'] = 'invalid'
+    os.environ['SFTP_PORT'] = '99999'  # Valid integer but invalid range (>65535)
 
     with pytest.raises(ConfigError):
         Settings()
