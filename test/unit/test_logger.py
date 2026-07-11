@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -54,3 +55,33 @@ def test_get_logger_returns_singleton():
     logger2 = get_logger('test')
 
     assert logger1 is logger2
+
+def test_file_handler_configuration():
+    """测试文件处理器配置"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        log_file = os.path.join(temp_dir, 'test.log')
+        logger = setup_logger('test', log_file)
+
+        # 验证文件处理器级别为INFO
+        # 通过检查handlers来验证
+        assert len(logger.handlers) == 2  # 一个文件处理器，一个控制台处理器
+        file_handler = [h for h in logger.handlers if isinstance(h, logging.FileHandler)][0]
+        console_handler = [h for h in logger.handlers if isinstance(h, logging.StreamHandler)][0]
+
+        assert file_handler.level == logging.INFO
+        assert console_handler.level == logging.INFO
+
+        # Clean up handlers to release file lock
+        for handler in logger.handlers[:]:
+            handler.close()
+            logger.removeHandler(handler)
+
+def test_singleton_behavior():
+    """测试单例行为"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        log_file = os.path.join(temp_dir, 'test.log')
+        logger1 = get_logger('test', log_file=log_file)
+        logger2 = get_logger('test', log_file=log_file)
+
+        # 应该返回同一个实例
+        assert logger1 is logger2

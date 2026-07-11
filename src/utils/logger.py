@@ -39,7 +39,7 @@ def setup_logger(name: str, log_file: str, level: str = 'INFO') -> logging.Logge
 
     # 文件处理器
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
