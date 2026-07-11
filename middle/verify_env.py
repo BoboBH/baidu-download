@@ -123,7 +123,7 @@ def main():
     # 检查Python模块
     print("\n检查Python模块...")
     modules = [
-        ('pysftp', 'pysftp'),
+        ('paramiko', 'paramiko'),
         ('pymysql', 'pymysql'),
         ('dotenv', 'python-dotenv'),
         ('colorama', 'colorama')

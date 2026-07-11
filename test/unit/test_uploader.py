@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 from src.uploader.sftp_client import SFTPClient
 from src.config.settings import ConfigError
+import paramiko
 
 @pytest.fixture
 def mock_settings():
@@ -26,22 +27,28 @@ def test_sftp_client_init_validates_config(mock_settings):
 
 def test_connect_to_sftp(mock_settings):
     """测试连接SFTP服务器"""
-    with patch('pysftp.Connection') as mock_connection:
+    with patch('paramiko.Transport') as mock_transport, \
+         patch('paramiko.SFTPClient.from_transport') as mock_sftp_from_transport:
+        mock_transport_instance = MagicMock()
+        mock_transport.return_value = mock_transport_instance
         mock_sftp = MagicMock()
-        mock_connection.return_value = mock_sftp
+        mock_sftp_from_transport.return_value = mock_sftp
 
         client = SFTPClient()
         client.connect()
 
         assert client.sftp == mock_sftp
-        assert mock_connection.called
+        assert mock_transport.called
 
 def test_upload_file(mock_settings):
     """测试上传文件"""
-    with patch('pysftp.Connection') as mock_connection, \
+    with patch('paramiko.Transport') as mock_transport, \
+         patch('paramiko.SFTPClient.from_transport') as mock_sftp_from_transport, \
          patch('pathlib.Path.exists', return_value=True):
+        mock_transport_instance = MagicMock()
+        mock_transport.return_value = mock_transport_instance
         mock_sftp = MagicMock()
-        mock_connection.return_value = mock_sftp
+        mock_sftp_from_transport.return_value = mock_sftp
 
         client = SFTPClient()
         client.connect()
@@ -56,26 +63,33 @@ def test_upload_file(mock_settings):
 
 def test_create_remote_directory(mock_settings):
     """测试创建远程目录"""
-    with patch('pysftp.Connection') as mock_connection:
+    with patch('paramiko.Transport') as mock_transport, \
+         patch('paramiko.SFTPClient.from_transport') as mock_sftp_from_transport:
+        mock_transport_instance = MagicMock()
+        mock_transport.return_value = mock_transport_instance
         mock_sftp = MagicMock()
         mock_sftp.stat.side_effect = IOError()  # Directory doesn't exist
-        mock_connection.return_value = mock_sftp
+        mock_sftp_from_transport.return_value = mock_sftp
 
         client = SFTPClient()
         client.connect()
 
         client.create_directory('/upload/folder')
 
-        mock_sftp.makedirs.assert_called_once()
+        mock_sftp.mkdir.assert_called()
 
 def test_disconnect(mock_settings):
     """测试断开连接"""
-    with patch('pysftp.Connection') as mock_connection:
+    with patch('paramiko.Transport') as mock_transport, \
+         patch('paramiko.SFTPClient.from_transport') as mock_sftp_from_transport:
+        mock_transport_instance = MagicMock()
+        mock_transport.return_value = mock_transport_instance
         mock_sftp = MagicMock()
-        mock_connection.return_value = mock_sftp
+        mock_sftp_from_transport.return_value = mock_sftp
 
         client = SFTPClient()
         client.connect()
         client.disconnect()
 
         mock_sftp.close.assert_called_once()
+        mock_transport_instance.close.assert_called_once()

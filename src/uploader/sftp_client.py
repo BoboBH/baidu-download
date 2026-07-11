@@ -1,4 +1,4 @@
-import pysftp
+import paramiko
 import os
 from pathlib import Path
 from typing import Optional
@@ -18,7 +18,8 @@ class SFTPClient:
         self.username = self.settings.sftp_username
         self.password = self.settings.sftp_password
         self.remote_path = self.settings.sftp_remote_path
-        self.sftp: Optional[pysftp.Connection] = None
+        self.transport: Optional[paramiko.Transport] = None
+        self.sftp: Optional[paramiko.SFTPClient] = None
 
         logger.info(f"SFTPClient initialized for {self.host}:{self.port}")
 
@@ -30,12 +31,12 @@ class SFTPClient:
             是否连接成功
         """
         try:
-            self.sftp = pysftp.Connection(
-                host=self.host,
-                port=self.port,
-                username=self.username,
-                password=self.password
-            )
+            # 创建Transport连接
+            self.transport = paramiko.Transport((self.host, self.port))
+            self.transport.connect(username=self.username, password=self.password)
+
+            # 创建SFTP客户端
+            self.sftp = paramiko.SFTPClient.from_transport(self.transport)
 
             logger.info(f"Connected to SFTP server: {self.host}:{self.port}")
             return True
@@ -49,7 +50,10 @@ class SFTPClient:
         if self.sftp:
             self.sftp.close()
             self.sftp = None
-            logger.info("Disconnected from SFTP server")
+        if self.transport:
+            self.transport.close()
+            self.transport = None
+        logger.info("Disconnected from SFTP server")
 
     def create_directory(self, dir_path: str) -> bool:
         """
@@ -66,13 +70,27 @@ class SFTPClient:
                 logger.error("Not connected to SFTP server")
                 return False
 
-            # 检查目录是否存在，不存在则创建
+            # 检查目录是否存在，不存在则递归创建
             try:
                 self.sftp.stat(dir_path)
                 logger.debug(f"Directory exists: {dir_path}")
+                return True
             except IOError:
-                self.sftp.makedirs(dir_path)
-                logger.info(f"Directory created: {dir_path}")
+                # 目录不存在，递归创建
+                dirs = []
+                current = dir_path
+                while current != '/':
+                    try:
+                        self.sftp.stat(current)
+                        break  # 找到存在的目录
+                    except IOError:
+                        dirs.append(current)
+                        current = os.path.dirname(current)
+
+                # 从上到下创建目录
+                for dir_path in reversed(dirs):
+                    self.sftp.mkdir(dir_path)
+                    logger.info(f"Directory created: {dir_path}")
 
             return True
 
