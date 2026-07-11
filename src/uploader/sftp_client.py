@@ -1,4 +1,4 @@
-import paramiko
+import pysftp
 import os
 from pathlib import Path
 from typing import Optional
@@ -18,8 +18,7 @@ class SFTPClient:
         self.username = self.settings.sftp_username
         self.password = self.settings.sftp_password
         self.remote_path = self.settings.sftp_remote_path
-        self.transport: Optional[paramiko.Transport] = None
-        self.sftp: Optional[paramiko.SFTPClient] = None
+        self.sftp: Optional[pysftp.Connection] = None
 
         logger.info(f"SFTPClient initialized for {self.host}:{self.port}")
 
@@ -31,12 +30,12 @@ class SFTPClient:
             是否连接成功
         """
         try:
-            # 创建Transport连接
-            self.transport = paramiko.Transport((self.host, self.port))
-            self.transport.connect(username=self.username, password=self.password)
-
-            # 创建SFTP客户端
-            self.sftp = paramiko.SFTPClient.from_transport(self.transport)
+            self.sftp = pysftp.Connection(
+                host=self.host,
+                port=self.port,
+                username=self.username,
+                password=self.password
+            )
 
             logger.info(f"Connected to SFTP server: {self.host}:{self.port}")
             return True
@@ -50,9 +49,6 @@ class SFTPClient:
         if self.sftp:
             self.sftp.close()
             self.sftp = None
-        if self.transport:
-            self.transport.close()
-            self.transport = None
         logger.info("Disconnected from SFTP server")
 
     def create_directory(self, dir_path: str) -> bool:
