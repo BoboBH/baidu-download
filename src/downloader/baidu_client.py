@@ -174,14 +174,15 @@ class BaiduClient:
             pdf_files = []
             for line in result['stdout'].split('\n'):
                 line = line.strip()
-                if not line or line.startswith('-'):
+                if not line:
                     continue
 
-                # BaiduPCS-Go输出格式：文件大小  文件名
+                # BaiduPCS-Go输出格式：- 路径 大小
+                # 例如：- /test.pdf 1048576
                 parts = line.split()
-                if len(parts) >= 2:
-                    file_path = parts[-1]  # 最后部分是文件路径
-                    file_size = parts[-2] if len(parts) > 1 else '0'
+                if len(parts) >= 3 and parts[0] == '-':
+                    file_path = parts[1]  # 路径部分
+                    file_size = parts[2]  # 大小部分
 
                     # 只处理PDF文件
                     if file_path.lower().endswith('.pdf'):
