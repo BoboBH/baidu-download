@@ -197,6 +197,55 @@ class DatabaseRepository:
         finally:
             cursor.close()
     
+    def get_file_logs_by_link(self, share_link: str) -> List[FileTransferLog]:
+        """
+        根据分享链接获取文件传输日志
+
+        Args:
+            share_link: 分享链接
+
+        Returns:
+            文件传输日志列表
+        """
+        cursor = self.connection.cursor()
+
+        try:
+            sql = """
+            SELECT * FROM file_transfer_log
+            WHERE share_link = %s
+            ORDER BY created_at DESC
+            """
+
+            cursor.execute(sql, (share_link,))
+            results = cursor.fetchall()
+
+            logs = []
+            for row in results:
+                logs.append(FileTransferLog(
+                    id=row['id'],
+                    share_link=row['share_link'],
+                    extraction_code=row['extraction_code'],
+                    folder_name=row['folder_name'],
+                    file_name=row['file_name'],
+                    file_path=row['file_path'],
+                    transfer_status=row['transfer_status'],
+                    error_message=row['error_message'],
+                    start_time=row['start_time'],
+                    download_time=row['download_time'],
+                    upload_time=row['upload_time'],
+                    file_size=row['file_size'],
+                    created_at=row['created_at'],
+                    updated_at=row['updated_at']
+                ))
+
+            return logs
+
+        except Exception as e:
+            logger.error(f"Failed to get file logs: {e}")
+            raise
+        finally:
+            cursor.close()
+
     def close(self):
         """关闭数据库连接"""
         if self.connection:
