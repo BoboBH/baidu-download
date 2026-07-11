@@ -128,8 +128,8 @@ def test_error_recovery_in_integration(temp_env):
             {'name': '/test/file2.pdf', 'size': 2048}
         ]
 
-        # 第一个文件下载成功,第二个失败
-        mock_baidu_instance.download_file.side_effect = [True, False]
+        # 第一个文件下载成功,第二个失败(所有重试都失败)
+        mock_baidu_instance.download_file.side_effect = [True, False, False, False]
 
         mock_db_instance = MagicMock()
         mock_db.return_value = mock_db_instance
