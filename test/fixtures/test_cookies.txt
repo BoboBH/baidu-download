@@ -1,0 +1,3 @@
+# 模拟百度cookies文件
+# 这个文件在真实环境中需要从Chrome浏览器导出
+BAIDU_COOKIE=test_cookie_value
