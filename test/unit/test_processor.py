@@ -53,6 +53,7 @@ def test_processor_process_files_successfully(mock_dependencies):
     mock_dependencies['sftp'].upload_file.return_value = True
     mock_dependencies['db'].insert_file_log.return_value = 1
     mock_dependencies['db'].insert_execution_summary.return_value = 1
+    mock_dependencies['db'].get_file_log_by_name_and_link.return_value = None  # No existing logs
 
     processor = FileProcessor()
     summary = processor.process_files(
@@ -62,9 +63,9 @@ def test_processor_process_files_successfully(mock_dependencies):
     )
 
     assert summary is not None
-    assert summary.total_files == 2
-    assert summary.success_count == 2
-    assert summary.failed_count == 0
+    assert summary.TOTAL_FILES == 2
+    assert summary.SUCCESS_COUNT == 2
+    assert summary.FAILED_COUNT == 0
 
 def test_processor_handles_download_failure(mock_dependencies):
     """测试处理下载失败"""
@@ -76,6 +77,7 @@ def test_processor_handles_download_failure(mock_dependencies):
     mock_dependencies['baidu'].download_file.return_value = False  # 下载失败
     mock_dependencies['db'].insert_file_log.return_value = 1
     mock_dependencies['db'].insert_execution_summary.return_value = 1
+    mock_dependencies['db'].get_file_log_by_name_and_link.return_value = None  # No existing logs
 
     processor = FileProcessor()
     summary = processor.process_files(
@@ -84,8 +86,8 @@ def test_processor_handles_download_failure(mock_dependencies):
         folder_name='test-folder'
     )
 
-    assert summary.failed_count == 1
-    assert summary.success_count == 0
+    assert summary.FAILED_COUNT == 1
+    assert summary.SUCCESS_COUNT == 0
 
 def test_processor_handles_upload_failure(mock_dependencies):
     """测试处理上传失败"""
@@ -98,6 +100,7 @@ def test_processor_handles_upload_failure(mock_dependencies):
     mock_dependencies['sftp'].upload_file.return_value = False  # 上传失败
     mock_dependencies['db'].insert_file_log.return_value = 1
     mock_dependencies['db'].insert_execution_summary.return_value = 1
+    mock_dependencies['db'].get_file_log_by_name_and_link.return_value = None  # No existing logs
 
     processor = FileProcessor()
     summary = processor.process_files(
@@ -106,8 +109,8 @@ def test_processor_handles_upload_failure(mock_dependencies):
         folder_name='test-folder'
     )
 
-    assert summary.failed_count == 1
-    assert summary.success_count == 0
+    assert summary.FAILED_COUNT == 1
+    assert summary.SUCCESS_COUNT == 0
 
 def test_processor_deletes_existing_folder(mock_dependencies):
     """测试删除已存在的文件夹"""

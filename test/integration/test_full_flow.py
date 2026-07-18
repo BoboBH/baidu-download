@@ -82,6 +82,7 @@ def test_full_integration_flow(temp_env):
         mock_db.return_value = mock_db_instance
         mock_db_instance.insert_file_log.return_value = 1
         mock_db_instance.insert_execution_summary.return_value = 1
+        mock_db_instance.get_file_log_by_name_and_link.return_value = None  # No existing logs
 
         # 创建临时文件来模拟BaiduPCS-Go
         fake_exe = os.path.join(temp_env, 'BaiduPCS-Go.exe')
@@ -98,9 +99,9 @@ def test_full_integration_flow(temp_env):
 
         # 验证结果
         assert summary is not None
-        assert summary.total_files == 2
-        assert summary.success_count == 2
-        assert summary.failed_count == 0
+        assert summary.TOTAL_FILES == 2
+        assert summary.SUCCESS_COUNT == 2
+        assert summary.FAILED_COUNT == 0
 
         # 验证调用顺序
         assert mock_baidu_instance.login.called
@@ -135,6 +136,7 @@ def test_error_recovery_in_integration(temp_env):
         mock_db.return_value = mock_db_instance
         mock_db_instance.insert_file_log.return_value = 1
         mock_db_instance.insert_execution_summary.return_value = 1
+        mock_db_instance.get_file_log_by_name_and_link.return_value = None  # No existing logs
 
         # 创建临时文件来模拟BaiduPCS-Go
         fake_exe = os.path.join(temp_env, 'BaiduPCS-Go.exe')
@@ -150,6 +152,6 @@ def test_error_recovery_in_integration(temp_env):
         )
 
         # 验证结果:应该有1个成功,1个失败
-        assert summary.total_files == 2
-        assert summary.success_count == 1
-        assert summary.failed_count == 1
+        assert summary.TOTAL_FILES == 2
+        assert summary.SUCCESS_COUNT == 1
+        assert summary.FAILED_COUNT == 1
