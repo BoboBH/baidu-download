@@ -1,0 +1,147 @@
+===============================================
+百度网盘PDF文件自动传输系统 v1.0.7
+部署指南
+===============================================
+
+【系统概述】
+本系统用于自动从百度网盘下载PDF文件并上传到SFTP服务器。
+版本：v1.0.7
+发布日期：2026年7月14日
+状态：生产就绪
+
+【主要功能】
+✅ 自动从百度网盘下载PDF文件
+✅ 自动上传到SFTP服务器
+✅ 数据库记录和去重
+✅ 错误处理和重试机制
+✅ 完整的日志记录
+
+【v1.0.7版本更新】
+✅ 修复6个关键数据库操作Bug
+✅ 完善命名约定一致性
+✅ 增强错误处理
+✅ 完整测试套件
+
+【系统要求】
+- Windows 10/11 或 Windows Server 2016+
+- 网络连接
+- MySQL 5.7+ 或 MariaDB 10.2+ (数据库服务器)
+- SFTP服务器访问权限
+
+【快速部署步骤】
+
+1. 解压部署包
+   将 baidu-download-v1.0.7-deployment.zip 解压到目标目录
+
+2. 配置数据库
+   编辑 .env 文件，设置数据库连接信息：
+
+   DB_HOST=localhost          # 数据库主机
+   DB_PORT=3306              # 数据库端口
+   DB_USER=your_user         # 数据库用户名
+   DB_PASSWORD=your_password # 数据库密码
+   DB_NAME=baidu_download    # 数据库名称
+
+3. 初始化数据库
+   运行数据库初始化脚本：
+
+   init_db_auto.bat
+
+   这将自动创建必要的数据库表。
+
+4. 配置SFTP服务器
+   继续编辑 .env 文件，设置SFTP连接信息：
+
+   SFTP_HOST=your_sftp_host        # SFTP服务器地址
+   SFTP_PORT=22                    # SFTP端口
+   SFTP_USER=your_sftp_user        # SFTP用户名
+   SFTP_PASSWORD=your_sftp_password # SFTP密码
+   SFTP_REMOTE_PATH=/path/to/destination # 目标路径
+
+5. 配置百度网盘
+   - 确保baidu-cookies.txt包含有效的百度网盘cookies
+   - 或者在运行时手动登录
+
+6. 测试运行
+   运行测试命令验证配置：
+
+   baidu-download.exe --link="测试链接" --folder="test" --dry-run
+
+7. 正式使用
+   使用示例：
+
+   baidu-download.exe --link="https://pan.baidu.com/s/xxx" --folder="reports" --code="1234"
+
+【配置文件说明】
+
+.env - 主要配置文件
+  数据库连接、SFTP连接、百度网盘配置
+
+baidu-cookies.txt - 百度网盘cookies
+  用于自动登录百度网盘
+
+【目录结构】
+
+baidu-download.exe           # 主程序
+BaiduPCS-Go.exe              # 百度网盘命令行工具
+.env                         # 配置文件
+baidu-cookies.txt           # 百度网盘cookies
+init_db_auto.bat            # 数据库初始化脚本
+logs/                       # 日志目录
+temp/                       # 临时文件目录
+
+【常见问题】
+
+Q: 数据库连接失败？
+A: 检查 .env 中的数据库配置，确保MySQL服务运行中
+
+Q: SFTP连接失败？
+A: 检查SFTP服务器地址、端口、用户名和密码配置
+
+Q: 百度网盘登录失败？
+A: 检查baidu-cookies.txt是否有效，或手动更新cookies
+
+Q: 文件下载失败？
+A: 检查网络连接和百度网盘链接有效性
+
+Q: 临时文件占用空间？
+A: 程序会自动清理临时文件，也可手动删除temp/目录内容
+
+【命令行参数】
+
+--link, -l        # 百度网盘分享链接（必需）
+--code, -c        # 提取码（可选，默认0409）
+--folder, -f      # 目标目录名（必需）
+--verbose, -v     # 显示详细日志
+--dry-run         # 仅测试配置，不执行实际操作
+--no-sftp         # 禁用SFTP上传（仅下载）
+--config          # 指定配置文件路径
+
+【使用示例】
+
+# 基本使用
+baidu-download.exe --link="https://pan.baidu.com/s/xxx" --folder="reports" --code="1234"
+
+# 使用默认提取码
+baidu-download.exe --link="https://pan.baidu.com/s/xxx" --folder="reports"
+
+# 详细日志模式
+baidu-download.exe --link="..." --folder="..." --verbose
+
+# 仅下载不上传
+baidu-download.exe --link="..." --folder="..." --no-sftp
+
+# 测试配置
+baidu-download.exe --link="..." --folder="..." --dry-run
+
+【技术支持】
+如遇到问题，请检查logs/目录中的日志文件。
+
+【版本历史】
+v1.0.7 (2026-07-14) - 数据库操作完全修复版本
+v1.0.6 (2026-07-14) - Windows路径长度限制修复
+v1.0.5 (2026-07-14) - 测试文件组织完成版本
+
+===============================================
+部署完成！祝使用愉快！
+===============================================

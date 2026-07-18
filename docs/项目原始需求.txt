@@ -1,0 +1,25 @@
+背景： 我有一个供应商每天会分享一个百度网盘的连接和提取密码，我需要自动下载这个分享链接文件加下的所有pdf文件，并上传到指定sftp，保持目录名称不变；例如下面是分享链接和提取码：
+
+链接：https://pan.baidu.com/s/1ir_5mHA5jNIHAstbyEZN-g 
+提取码：0409
+
+# SFTP服务器配置
+SFTP_HOST=192.168.0.122
+SFTP_PORT=22
+SFTP_USERNAME=sftp01
+SFTP_PASSWORD=123456
+SFTP_REMOTE_PATH=/sftp01/upload
+
+可选技术方案：
+BaiduPCS-Go，github地址：https://github.com/qjfoidnh/BaiduPCS-Go#%E7%99%BB%E5%BD%95%E7%99%BE%E5%BA%A6%E5%B8%90%E5%8F%B7
+我已经下载并解压到本地：D:\tools\BaiduPCS-Go-v4.0.1-windows-x64
+我已经验证login --cookies="baidu-cookies from Chrome";
+
+1.实现从分享链接->本地临时目录->sftp的全链路；输入参数是分享链接、提取码、目录名称；如果我的网盘目录下已经有文件夹了，转存是可以先删除文件夹；
+2.需要记录文件信息到mysql表，需要记录分享链接、提取码、文件名称、状态、上传成功时间等；数据库配置如下：
+	host=localhost,port=3306,user=root, password=123456	
+  数据表的创建需要提供脚本，以便我在生产环境中初始化；
+3.我需要打包成zip发版，免安装,生成的文件是.exe，如有必要可以增加BaiduPCS-Go的exe文件，支持windows11;后续要支持centos时，我再下载BaiduPCS-Go的linux版本；
+4.关于示例的链接、提取码、sftp配置、mysql配置等，你需要写到.env配置文件，以便生产环境中再修改；你也要讲这些配置加入项目记忆中，以便跨会话共享；
+5.项目规则:尽量写多测试用例，测试相关的文件要归集到test目录，按照要求可以向下创建子目录；中间验证、创建的脚步也需要归集到middle目录，可以有子目录；以上要保证项目目录的干净整洁
+6.该项目已python3.8实现，我已以安装python到d:\python38,你需要在项目先安装虚拟环境;

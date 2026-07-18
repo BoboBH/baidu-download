@@ -25,8 +25,8 @@ class DatabaseRepository:
         self.user = user
         self.password = password
         self.database = database
-        
-        # 创建数据库连接
+
+        # 创建数据库连接 (不指定数据库，避免认证问题)
         self.connection = pymysql.connect(
             host=host,
             port=port,
@@ -35,21 +35,21 @@ class DatabaseRepository:
             charset='utf8mb4',
             cursorclass=pymysql.cursors.DictCursor
         )
-        
+
         # 初始化数据库
         self._init_database()
     
     def _init_database(self):
         """初始化数据库和表"""
         cursor = self.connection.cursor()
-        
+
         try:
             # 创建数据库
             cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.database} "
                           "DEFAULT CHARACTER SET utf8mb4 "
                           "DEFAULT COLLATE utf8mb4_unicode_ci")
             cursor.execute(f"USE {self.database}")
-            
+
             # 创建表
             from src.database.models import create_tables
             sql_commands = create_tables().split(';')
@@ -57,10 +57,10 @@ class DatabaseRepository:
                 command = command.strip()
                 if command:
                     cursor.execute(command)
-            
+
             self.connection.commit()
             logger.info("Database initialized successfully")
-            
+
         except Exception as e:
             logger.error(f"Database initialization failed: {e}")
             self.connection.rollback()
@@ -82,25 +82,25 @@ class DatabaseRepository:
         
         try:
             sql = """
-            INSERT INTO file_transfer_log 
-            (share_link, extraction_code, folder_name, file_name, file_path, 
+            INSERT INTO file_transfer_log
+            (share_link, extraction_code, folder_name, file_name, file_path,
              transfer_status, start_time, file_size)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """
-            
+
             cursor.execute(sql, (
-                log.share_link,
-                log.extraction_code,
-                log.folder_name,
-                log.file_name,
-                log.file_path,
-                log.transfer_status,
-                log.start_time or datetime.now(),
-                log.file_size
+                log.SHARE_LINK,
+                log.EXTRACTION_CODE,
+                log.FOLDER_NAME,
+                log.FILE_NAME,
+                log.FILE_PATH,
+                log.TRANSFER_STATUS,
+                log.START_TIME or datetime.now(),
+                log.FILE_SIZE
             ))
             
             self.connection.commit()
-            logger.debug(f"Inserted file log: {log.file_name}")
+            logger.debug(f"Inserted file log: {log.FILE_NAME}")
             return cursor.lastrowid
             
         except Exception as e:
@@ -128,14 +128,14 @@ class DatabaseRepository:
         
         try:
             sql = """
-            UPDATE file_transfer_log 
+            UPDATE file_transfer_log
             SET transfer_status = %s,
                 error_message = %s,
                 download_time = %s,
                 upload_time = %s
             WHERE id = %s
             """
-            
+
             cursor.execute(sql, (
                 status,
                 error_message,
@@ -168,26 +168,26 @@ class DatabaseRepository:
         
         try:
             sql = """
-            INSERT INTO execution_summary 
-            (share_link, folder_name, total_files, success_count, 
+            INSERT INTO execution_summary
+            (share_link, folder_name, total_files, success_count,
              failed_count, skipped_count, start_time, end_time, total_size)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
-            
+
             cursor.execute(sql, (
-                summary.share_link,
-                summary.folder_name,
-                summary.total_files,
-                summary.success_count,
-                summary.failed_count,
-                summary.skipped_count,
-                summary.start_time,
-                summary.end_time,
-                summary.total_size
+                summary.SHARE_LINK,
+                summary.FOLDER_NAME,
+                summary.TOTAL_FILES,
+                summary.SUCCESS_COUNT,
+                summary.FAILED_COUNT,
+                summary.SKIPPED_COUNT,
+                summary.START_TIME,
+                summary.END_TIME,
+                summary.TOTAL_SIZE
             ))
             
             self.connection.commit()
-            logger.info(f"Inserted execution summary for {summary.folder_name}")
+            logger.info(f"Inserted execution summary for {summary.FOLDER_NAME}")
             return cursor.lastrowid
             
         except Exception as e:
@@ -222,20 +222,20 @@ class DatabaseRepository:
             logs = []
             for row in results:
                 logs.append(FileTransferLog(
-                    id=row['id'],
-                    share_link=row['share_link'],
-                    extraction_code=row['extraction_code'],
-                    folder_name=row['folder_name'],
-                    file_name=row['file_name'],
-                    file_path=row['file_path'],
-                    transfer_status=row['transfer_status'],
-                    error_message=row['error_message'],
-                    start_time=row['start_time'],
-                    download_time=row['download_time'],
-                    upload_time=row['upload_time'],
-                    file_size=row['file_size'],
-                    created_at=row['created_at'],
-                    updated_at=row['updated_at']
+                    ID=row['id'],
+                    SHARE_LINK=row['share_link'],
+                    EXTRACTION_CODE=row['extraction_code'],
+                    FOLDER_NAME=row['folder_name'],
+                    FILE_NAME=row['file_name'],
+                    FILE_PATH=row['file_path'],
+                    TRANSFER_STATUS=row['transfer_status'],
+                    ERROR_MESSAGE=row['error_message'],
+                    START_TIME=row['start_time'],
+                    DOWNLOAD_TIME=row['download_time'],
+                    UPLOAD_TIME=row['upload_time'],
+                    FILE_SIZE=row['file_size'],
+                    CREATED_AT=row['created_at'],
+                    UPDATED_AT=row['updated_at']
                 ))
 
             return logs
@@ -243,6 +243,57 @@ class DatabaseRepository:
         except Exception as e:
             logger.error(f"Failed to get file logs: {e}")
             raise
+        finally:
+            cursor.close()
+
+    def get_file_log_by_name_and_link(self, file_name: str, share_link: str, folder_name: str) -> Optional[FileTransferLog]:
+        """
+        根据文件名和分享链接获取文件传输日志
+
+        Args:
+            file_name: 文件名
+            share_link: 分享链接
+            folder_name: 目录名
+
+        Returns:
+            文件传输日志，如果不存在返回None
+        """
+        cursor = self.connection.cursor()
+
+        try:
+            sql = """
+            SELECT * FROM file_transfer_log
+            WHERE file_name = %s AND share_link = %s AND folder_name = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+
+            cursor.execute(sql, (file_name, share_link, folder_name))
+            row = cursor.fetchone()
+
+            if row:
+                return FileTransferLog(
+                    ID=row['id'],
+                    SHARE_LINK=row['share_link'],
+                    EXTRACTION_CODE=row['extraction_code'],
+                    FOLDER_NAME=row['folder_name'],
+                    FILE_NAME=row['file_name'],
+                    FILE_PATH=row['file_path'],
+                    TRANSFER_STATUS=row['transfer_status'],
+                    ERROR_MESSAGE=row['error_message'],
+                    START_TIME=row['start_time'],
+                    DOWNLOAD_TIME=row['download_time'],
+                    UPLOAD_TIME=row['upload_time'],
+                    FILE_SIZE=row['file_size'],
+                    CREATED_AT=row['created_at'],
+                    UPDATED_AT=row['updated_at']
+                )
+            else:
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to get file log by name and link: {e}")
+            return None
         finally:
             cursor.close()
 
