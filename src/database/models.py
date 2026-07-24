@@ -35,6 +35,21 @@ class ExecutionSummary:
     id: Optional[int] = None
     created_at: Optional[datetime] = None
 
+@dataclass
+class MessageProcessLog:
+    """消息处理日志模型"""
+    message_hash: str
+    original_message: Optional[str] = None
+    share_link: Optional[str] = None
+    folder_name: Optional[str] = None
+    status: str = 'pending'  # pending, processing, success, failed, critical_error
+    error_message: Optional[str] = None
+    execution_summary_id: Optional[int] = None
+    processing_time: Optional[int] = None  # 毫秒
+    ID: Optional[int] = None
+    CREATED_AT: Optional[datetime] = None
+    UPDATED_AT: Optional[datetime] = None
+
 def create_tables() -> str:
     """
     生成创建表的SQL语句
@@ -89,4 +104,24 @@ CREATE TABLE IF NOT EXISTS execution_summary (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT='执行摘要表';
+
+-- 创建消息处理记录表
+CREATE TABLE IF NOT EXISTS message_process_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    message_hash VARCHAR(64) NOT NULL UNIQUE COMMENT '消息MD5哈希',
+    original_message TEXT COMMENT '原始消息内容',
+    share_link VARCHAR(500) COMMENT '提取的网盘链接',
+    folder_name VARCHAR(255) COMMENT '提取的目录名',
+    status ENUM('pending', 'processing', 'success', 'failed', 'critical_error')
+        DEFAULT 'pending' COMMENT '处理状态',
+    error_message TEXT COMMENT '错误信息',
+    execution_summary_id INT COMMENT '关联执行摘要ID',
+    processing_time INT COMMENT '处理耗时(毫秒)',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
+    INDEX idx_message_hash (message_hash),
+    INDEX idx_status (status),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT='飞书消息处理记录表';
 """
