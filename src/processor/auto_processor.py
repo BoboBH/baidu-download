@@ -141,7 +141,7 @@ class AutoProcessor:
                     processing_time = int((datetime.now() - process_start_time).total_seconds() * 1000)
 
                     # Update database status based on result
-                    if summary and summary.SUCCESS_COUNT > 0:
+                    if summary and summary.success_count > 0:
                         status = "success"
                         error_message = None
                     else:
