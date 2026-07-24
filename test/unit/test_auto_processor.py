@@ -317,3 +317,8 @@ class TestAutoProcessor:
 
         exit_code = auto_processor.process_messages()
         assert exit_code == 1
+
+    def test_auto_processor_importable_from_processor(self):
+        """Test AutoProcessor can be imported from processor module"""
+        from src.processor import AutoProcessor
+        assert AutoProcessor is not None
