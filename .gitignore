@@ -45,7 +45,10 @@ temp/
 htmlcov/
 .tox/
 
-# Build
+# Build (but allow our build configuration)
 dist/
 build/
 *.spec
+!baidu_download.spec
+!build_exe.bat
+!BUILD_README.md
