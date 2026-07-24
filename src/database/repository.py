@@ -1,7 +1,7 @@
 import pymysql
 from typing import List, Optional
 from datetime import datetime
-from src.database.models import FileTransferLog, ExecutionSummary
+from src.database.models import FileTransferLog, ExecutionSummary, MessageProcessLog
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -294,6 +294,167 @@ class DatabaseRepository:
         except Exception as e:
             logger.error(f"Failed to get file log by name and link: {e}")
             return None
+        finally:
+            cursor.close()
+
+    def insert_message_log(self, log: MessageProcessLog) -> int:
+        """
+        插入消息处理日志
+
+        Args:
+            log: 消息处理日志对象
+
+        Returns:
+            插入记录的ID
+        """
+        cursor = self.connection.cursor()
+
+        try:
+            sql = """
+            INSERT INTO message_process_log
+            (message_hash, original_message, share_link, folder_name, status,
+             error_message, execution_summary_id, processing_time)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """
+
+            cursor.execute(sql, (
+                log.message_hash,
+                log.original_message,
+                log.share_link,
+                log.folder_name,
+                log.status,
+                log.error_message,
+                log.execution_summary_id,
+                log.processing_time
+            ))
+
+            self.connection.commit()
+            logger.debug(f"Inserted message log: {log.message_hash[:8]}...")
+            return cursor.lastrowid
+
+        except Exception as e:
+            logger.error(f"Failed to insert message log: {e}")
+            self.connection.rollback()
+            raise
+        finally:
+            cursor.close()
+
+    def get_message_by_hash(self, message_hash: str) -> Optional[MessageProcessLog]:
+        """
+        根据消息哈希获取消息处理日志
+
+        Args:
+            message_hash: 消息哈希值
+
+        Returns:
+            消息处理日志，如果不存在返回None
+        """
+        cursor = self.connection.cursor()
+
+        try:
+            sql = """
+            SELECT * FROM message_process_log
+            WHERE message_hash = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+
+            cursor.execute(sql, (message_hash,))
+            row = cursor.fetchone()
+
+            if row:
+                return MessageProcessLog(
+                    id=row['id'],
+                    message_hash=row['message_hash'],
+                    original_message=row['original_message'],
+                    share_link=row['share_link'],
+                    folder_name=row['folder_name'],
+                    status=row['status'],
+                    error_message=row['error_message'],
+                    execution_summary_id=row['execution_summary_id'],
+                    processing_time=row['processing_time'],
+                    created_at=row['created_at'],
+                    updated_at=row['updated_at']
+                )
+            else:
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to get message by hash: {e}")
+            return None
+        finally:
+            cursor.close()
+
+    def update_message_status(self, message_hash: str, status: str,
+                             error_message: Optional[str] = None,
+                             execution_summary_id: Optional[int] = None,
+                             processing_time: Optional[int] = None):
+        """
+        更新消息处理状态
+
+        Args:
+            message_hash: 消息哈希值
+            status: 新状态
+            error_message: 错误信息
+            execution_summary_id: 执行摘要ID
+            processing_time: 处理耗时(毫秒)
+        """
+        cursor = self.connection.cursor()
+
+        try:
+            sql = """
+            UPDATE message_process_log
+            SET status = %s,
+                error_message = %s,
+                execution_summary_id = %s,
+                processing_time = %s
+            WHERE message_hash = %s
+            """
+
+            cursor.execute(sql, (
+                status,
+                error_message,
+                execution_summary_id,
+                processing_time,
+                message_hash
+            ))
+
+            self.connection.commit()
+            logger.debug(f"Updated message {message_hash[:8]}... status to {status}")
+
+        except Exception as e:
+            logger.error(f"Failed to update message status: {e}")
+            self.connection.rollback()
+            raise
+        finally:
+            cursor.close()
+
+    def get_recent_messages_to_retry(self, hours: int = 24) -> list:
+        """
+        获取最近N小时内需要重试的消息
+
+        Args:
+            hours: 时间范围（小时）
+
+        Returns:
+            消息哈希列表
+        """
+        cursor = self.connection.cursor()
+
+        try:
+            sql = """
+            SELECT message_hash FROM message_process_log
+            WHERE status = 'critical_error'
+            AND created_at >= DATE_SUB(NOW(), INTERVAL %s HOUR)
+            """
+
+            cursor.execute(sql, (hours,))
+            results = cursor.fetchall()
+            return [row['message_hash'] for row in results]
+
+        except Exception as e:
+            logger.error(f"Failed to get recent messages to retry: {e}")
+            return []
         finally:
             cursor.close()
 
