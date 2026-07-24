@@ -74,7 +74,7 @@ class AutoProcessor:
         """
         try:
             self.logger.info("Starting automatic message processing")
-            start_time = datetime.now()
+            overall_start_time = datetime.now()
 
             # Retrieve messages from Feishu
             messages = self.feishu_client.get_messages()
@@ -83,6 +83,9 @@ class AutoProcessor:
             results = []
 
             for message in messages:
+                message_hash = None  # Initialize before try block for proper exception handling
+                parse_result = None  # Initialize for proper error reporting
+
                 try:
                     # Extract message content from JSON
                     content = message.get("content", "")
@@ -94,6 +97,11 @@ class AutoProcessor:
                     parse_result = self.message_parser.parse_message(content)
                     if not parse_result:
                         self.logger.debug(f"Failed to parse message: {content[:50]}...")
+                        continue
+
+                    # Input validation - ensure parse_result has required attributes
+                    if not hasattr(parse_result, 'folder_name') or not hasattr(parse_result, 'share_link') or not hasattr(parse_result, 'code'):
+                        self.logger.warning(f"Invalid parse result structure for message: {content[:50]}...")
                         continue
 
                     # Calculate message hash
@@ -124,13 +132,13 @@ class AutoProcessor:
                     self.db_repo.update_message_status(message_hash, "processing")
 
                     # Process via FileProcessor
-                    start_time = datetime.now()
+                    process_start_time = datetime.now()
                     summary = self.file_processor.process_files(
                         parse_result.share_link,
                         parse_result.code,
                         parse_result.folder_name
                     )
-                    processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
+                    processing_time = int((datetime.now() - process_start_time).total_seconds() * 1000)
 
                     # Update database status based on result
                     if summary and summary.SUCCESS_COUNT > 0:
@@ -157,19 +165,27 @@ class AutoProcessor:
 
                 except Exception as e:
                     self.logger.error(f"Error processing individual message: {e}")
-                    # Update status to critical_error for this message
-                    if 'message_hash' in locals():
+                    # Update status to critical_error for this message if we have a message_hash
+                    if message_hash is not None:
                         self.db_repo.update_message_status(
                             message_hash,
                             "critical_error",
                             error_message=str(e)
                         )
+                    # If message_hash is None but we have parse_result, try to create a result for tracking
+                    elif parse_result is not None:
+                        results.append(ProcessResult(
+                            folder_name=parse_result.folder_name if hasattr(parse_result, 'folder_name') else "unknown",
+                            share_link=parse_result.share_link if hasattr(parse_result, 'share_link') else "unknown",
+                            status="critical_error",
+                            error_message=str(e)
+                        ))
                     continue
 
             # Send notification
             self._send_result_notification(results)
 
-            self.logger.info(f"Processing completed in {int((datetime.now() - start_time).total_seconds())}s")
+            self.logger.info(f"Processing completed in {int((datetime.now() - overall_start_time).total_seconds())}s")
             return 0
 
         except Exception as e:
@@ -250,9 +266,3 @@ class AutoProcessor:
         except Exception as e:
             self.logger.error(f"Error sending notification: {e}")
             return False
-
-            return 0
-
-        except Exception as e:
-            self.logger.error(f"Critical failure during message processing: {e}")
-            return 1
