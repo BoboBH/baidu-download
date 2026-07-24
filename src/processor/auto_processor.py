@@ -5,6 +5,7 @@ from src.config.settings import Settings
 from src.feishu.feishu_client import FeishuMessageClient
 from src.feishu.message_parser import MessageParser
 from src.database.repository import DatabaseRepository
+from src.database.message_models import MessageProcessLog
 from src.processor.file_processor import FileProcessor
 from src.notification.dingtalk_notifier import DingtalkNotifier
 from src.utils.logger import get_logger
@@ -78,7 +79,57 @@ class AutoProcessor:
             messages = self.feishu_client.get_messages()
             self.logger.info(f"Retrieved {len(messages)} messages from Feishu")
 
-            # Process messages logic will be added in next tasks
+            results = []
+
+            for message in messages:
+                try:
+                    # Extract message content from JSON
+                    content = message.get("content", "")
+                    if not content:
+                        self.logger.warning(f"Empty message content for message_id: {message.get('message_id')}")
+                        continue
+
+                    # Parse message content
+                    parse_result = self.message_parser.parse_message(content)
+                    if not parse_result:
+                        self.logger.debug(f"Failed to parse message: {content[:50]}...")
+                        continue
+
+                    # Calculate message hash
+                    message_hash = self.message_parser.calculate_message_hash(content)
+
+                    # Check for duplicates
+                    if self._is_duplicate_message(message_hash):
+                        self.logger.info(f"Skipping duplicate message: {parse_result.folder_name}")
+                        results.append(ProcessResult(
+                            folder_name=parse_result.folder_name,
+                            share_link=parse_result.share_link,
+                            status="skipped"
+                        ))
+                        continue
+
+                    # Insert new message to database
+                    message_log = MessageProcessLog(
+                        message_hash=message_hash,
+                        original_message=content,
+                        share_link=parse_result.share_link,
+                        folder_name=parse_result.folder_name,
+                        status="pending"
+                    )
+                    self.db_repo.insert_message_log(message_log)
+                    self.logger.info(f"Inserted new message: {parse_result.folder_name}")
+
+                    # Process logic will be added in next task
+                    results.append(ProcessResult(
+                        folder_name=parse_result.folder_name,
+                        share_link=parse_result.share_link,
+                        status="pending"
+                    ))
+
+                except Exception as e:
+                    self.logger.error(f"Error processing individual message: {e}")
+                    continue
+
             return 0
 
         except Exception as e:

@@ -72,3 +72,56 @@ class TestAutoProcessor:
             exit_code = auto_processor.process_messages()
             assert isinstance(exit_code, int)
             assert exit_code in [0, 1]
+
+    @patch('src.processor.auto_processor.ProcessResult')
+    def test_process_messages_parses_valid_message(self, mock_result_class, auto_processor):
+        """Test process_messages parses valid Feishu messages"""
+        # Mock Feishu messages
+        mock_messages = [
+            {"message_id": "msg1", "content": '{"text":"260723：https://pan.baidu.com/s/abc123"}'},
+            {"message_id": "msg2", "content": '{"text":"invalid message"}'},
+        ]
+        auto_processor.feishu_client.get_messages = Mock(return_value=mock_messages)
+
+        # Mock message parser
+        mock_parse_result = Mock()
+        mock_parse_result.folder_name = "260723"
+        mock_parse_result.share_link = "https://pan.baidu.com/s/abc123"
+        mock_parse_result.code = "0409"
+        auto_processor.message_parser.parse_message = Mock(side_effect=[mock_parse_result, None])
+
+        # Mock duplicate check - no duplicates
+        auto_processor._is_duplicate_message = Mock(return_value=False)
+
+        # Mock database insertion
+        auto_processor.db_repo.insert_message_log = Mock(return_value=1)
+
+        exit_code = auto_processor.process_messages()
+
+        assert exit_code == 0
+        assert auto_processor.message_parser.parse_message.call_count == 2
+        auto_processor.db_repo.insert_message_log.assert_called_once()
+
+    def test_process_messages_skips_duplicate_messages(self, auto_processor):
+        """Test process_messages skips duplicate messages"""
+        mock_messages = [
+            {"message_id": "msg1", "content": '{"text":"260723：https://pan.baidu.com/s/abc123"}'},
+        ]
+        auto_processor.feishu_client.get_messages = Mock(return_value=mock_messages)
+
+        mock_parse_result = Mock()
+        mock_parse_result.folder_name = "260723"
+        mock_parse_result.share_link = "https://pan.baidu.com/s/abc123"
+        mock_parse_result.code = "0409"
+        auto_processor.message_parser.parse_message = Mock(return_value=mock_parse_result)
+
+        # Mock duplicate check - message is duplicate
+        auto_processor._is_duplicate_message = Mock(return_value=True)
+
+        # Should NOT insert duplicate message
+        auto_processor.db_repo.insert_message_log = Mock()
+
+        exit_code = auto_processor.process_messages()
+
+        assert exit_code == 0
+        auto_processor.db_repo.insert_message_log.assert_not_called()
