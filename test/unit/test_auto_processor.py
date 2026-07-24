@@ -273,3 +273,47 @@ class TestAutoProcessor:
         results = call_args[0][0]
         assert len(results) == 1
         assert results[0].folder_name == "260723"
+
+    def test_exit_code_success_with_partial_failures(self, auto_processor):
+        """Test exit code 0 when some messages fail but processing completes"""
+        mock_messages = [
+            {"message_id": "msg1", "content": '{"text":"260723：https://pan.baidu.com/s/abc1"}'},
+            {"message_id": "msg2", "content": '{"text":"260724：https://pan.baidu.com/s/abc2"}'},
+        ]
+        auto_processor.feishu_client.get_messages = Mock(return_value=mock_messages)
+
+        auto_processor.message_parser.parse_message = Mock(side_effect=[
+            Mock(folder_name="260723", share_link="https://pan.baidu.com/s/abc1", code="0409"),
+            Mock(folder_name="260724", share_link="https://pan.baidu.com/s/abc2", code="0409"),
+        ])
+        auto_processor.message_parser.calculate_message_hash = Mock(side_effect=["hash1", "hash2"])
+        auto_processor._is_duplicate_message = Mock(return_value=False)
+        auto_processor.db_repo.insert_message_log = Mock(return_value=1)
+
+        # First message succeeds, second fails
+        auto_processor.file_processor.process_files = Mock(side_effect=[
+            Mock(SUCCESS_COUNT=5, FAILED_COUNT=0),
+            None  # Failure
+        ])
+
+        exit_code = auto_processor.process_messages()
+
+        # Should return 0 (success even with partial failures)
+        assert exit_code == 0
+
+    def test_exit_code_critical_failure_on_retrieval_error(self, auto_processor):
+        """Test exit code 1 when Feishu message retrieval fails"""
+        auto_processor.feishu_client.get_messages = Mock(side_effect=Exception("API timeout"))
+
+        exit_code = auto_processor.process_messages()
+
+        # Should return 1 (critical failure)
+        assert exit_code == 1
+
+    def test_exit_code_critical_failure_on_config_error(self, auto_processor):
+        """Test exit code 1 when configuration is invalid"""
+        # Test with feishu_client.get_messages failing (config/API error)
+        auto_processor.feishu_client.get_messages = Mock(side_effect=Exception("Config error"))
+
+        exit_code = auto_processor.process_messages()
+        assert exit_code == 1
