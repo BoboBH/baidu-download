@@ -2,7 +2,7 @@ import pytest
 from datetime import datetime
 from unittest.mock import Mock, patch
 from src.database.repository import DatabaseRepository
-from src.database.models import MessageProcessLog
+from src.database.message_models import MessageProcessLog
 
 @pytest.fixture
 def mock_db_connection():

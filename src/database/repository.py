@@ -1,7 +1,8 @@
 import pymysql
 from typing import List, Optional
 from datetime import datetime
-from src.database.models import FileTransferLog, ExecutionSummary, MessageProcessLog
+from src.database.models import FileTransferLog, ExecutionSummary
+from src.database.message_models import MessageProcessLog
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
