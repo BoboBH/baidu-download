@@ -46,9 +46,9 @@ class MessageProcessLog:
     error_message: Optional[str] = None
     execution_summary_id: Optional[int] = None
     processing_time: Optional[int] = None  # 毫秒
-    ID: Optional[int] = None
-    CREATED_AT: Optional[datetime] = None
-    UPDATED_AT: Optional[datetime] = None
+    id: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 def create_tables() -> str:
     """
