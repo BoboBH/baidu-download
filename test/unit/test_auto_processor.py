@@ -30,4 +30,18 @@ class TestAutoProcessor:
     def auto_processor(self, mock_settings):
         """Create AutoProcessor instance with mocked dependencies"""
         with patch('src.processor.auto_processor.Settings', return_value=mock_settings):
-            return AutoProcessor()
+            with patch('src.processor.auto_processor.DatabaseRepository'):
+                with patch('src.processor.auto_processor.FeishuMessageClient'):
+                    with patch('src.processor.auto_processor.MessageParser'):
+                        with patch('src.processor.auto_processor.FileProcessor'):
+                            with patch('src.processor.auto_processor.DingtalkNotifier'):
+                                return AutoProcessor()
+
+    def test_auto_processor_init(self, auto_processor):
+        """Test AutoProcessor initialization"""
+        assert auto_processor.settings is not None
+        assert auto_processor.feishu_client is not None
+        assert auto_processor.message_parser is not None
+        assert auto_processor.db_repo is not None
+        assert auto_processor.file_processor is not None
+        assert auto_processor.dingtalk_notifier is not None
