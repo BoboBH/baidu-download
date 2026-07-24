@@ -381,7 +381,7 @@ class DatabaseRepository:
 
         except Exception as e:
             logger.error(f"Failed to get message by hash: {e}")
-            return None
+            raise
         finally:
             cursor.close()
 
@@ -454,7 +454,7 @@ class DatabaseRepository:
 
         except Exception as e:
             logger.error(f"Failed to get recent messages to retry: {e}")
-            return []
+            raise
         finally:
             cursor.close()
 
