@@ -51,13 +51,14 @@
 构建后的文件结构:
 ```
 dist/
-├── baidu-download.exe          # 主可执行文件
-└── deployment/                 # 部署包目录
-    ├── README.txt             # 部署说明
-    ├── .env.example           # 配置模板
-    └── middle/                # 数据库脚本
-        └── db_init.sql        # 数据库初始化脚本
+├── baidu-download.exe          # 主可执行文件 (包含版本信息 v1.1.5.0)
+└── .env.example                # 配置文件模板
 ```
+
+**注意**: PyInstaller会自动将所有必要的文件嵌入到可执行文件中，包括:
+- 数据库脚本 (middle/db_init.sql)
+- BaiduPCS-Go.exe 百度网盘CLI工具
+- 所有Python依赖和源代码模块
 
 ## 部署指南
 
@@ -67,9 +68,16 @@ dist/
 - MySQL数据库 (或远程访问权限)
 - 网络连接 (访问百度网盘API和SFTP服务器)
 
-### 2. 配置文件设置
+### 2. 快速部署
 
-1. 复制 `.env.example` 为 `.env`
+将整个 `dist/` 目录复制到目标服务器:
+```cmd
+xcopy dist\ C:\path\to\deployment\ /E /I
+```
+
+### 3. 配置文件设置
+
+1. 在目标服务器上，复制 `.env.example` 为 `.env`
 2. 编辑 `.env` 文件，配置以下参数:
 
 #### 必须配置的参数

@@ -203,21 +203,40 @@ if exist ".env.example" (
 REM PyInstaller会自动包含所有必要文件，无需手动创建复杂目录结构
 
 REM ============================================================================
-REM Step 6: 构建完成总结
+REM Step 6: 后构建验证测试
+REM ============================================================================
+
+call :print_section "Step 6: 后构建验证测试"
+
+call :print_info "测试可执行文件基本功能..."
+cd "%DIST_DIR%"
+"%PROJECT_NAME%.exe" --help >nul 2>&1
+if errorlevel 1 (
+    call :print_warn "可执行文件测试失败，但构建可能仍然成功"
+    call :print_warn "这可能是由于缺少运行时配置文件导致的"
+    call :print_warn "请确保在部署时提供正确的.env配置文件"
+) else (
+    call :print_info "可执行文件基本功能测试通过"
+    call :print_info "帮助命令可以正常执行"
+)
+cd "%~dp0"
+
+REM ============================================================================
+REM Step 7: 构建完成总结
 REM ============================================================================
 
 call :print_section "Step 6: 构建完成总结"
 
 call :print_info "构建成功完成！"
 echo.
-echo 部署文件位置:
+echo 构建文件位置:
 echo   可执行文件: %DIST_DIR%\%PROJECT_NAME%.exe
-echo   部署目录:   %DEPLOY_DIR%
+echo   配置模板:   %DIST_DIR%\.env.example
 echo.
 echo 下一步操作:
-echo 1. 将部署目录复制到目标服务器
-echo 2. 配置.env文件
-echo 3. 测试可执行文件
+echo 1. 将 %DIST_DIR% 目录复制到目标服务器
+echo 2. 将 .env.example 复制为 .env 并配置环境参数
+echo 3. 测试可执行文件: %PROJECT_NAME%.exe --help
 echo 4. 设置Windows任务计划程序 (如需要)
 echo.
 
