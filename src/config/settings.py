@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
@@ -34,6 +35,18 @@ class Settings:
         self.sftp_username = self._get_required_env('SFTP_USERNAME')
         self.sftp_password = self._get_required_env('SFTP_PASSWORD')
         self.sftp_remote_path = self._get_required_env('SFTP_REMOTE_PATH')
+
+        # 飞书配置
+        self.feishu_app_id = os.getenv('FEISHU_APP_ID', '')
+        self.feishu_app_secret = os.getenv('FEISHU_APP_SECRET', '')
+        self.feishu_chat_id = os.getenv('FEISHU_CHAT_ID', '')
+        self.feishu_hours_limit = self._get_int_env('FEISHU_HOURS_LIMIT', default=24)  # 默认24小时
+
+        # 钉钉配置
+        self.dingtalk_webhook = os.getenv('DINGTALK_WEBHOOK', '')
+
+        # 消息处理配置
+        self.message_default_extraction_code = os.getenv('MESSAGE_DEFAULT_EXTRACTION_CODE', '0409')
 
         # 数据库配置
         self.db_host = self._get_required_env('DB_HOST')
@@ -92,3 +105,34 @@ class Settings:
             raise ConfigError(f"Invalid SFTP port: {self.sftp_port}")
         if not (1 <= self.db_port <= 65535):
             raise ConfigError(f"Invalid DB port: {self.db_port}")
+
+        # 验证飞书配置（用于自动化模式）
+        self._validate_feishu_config()
+
+    def _validate_feishu_config(self):
+        """验证飞书配置的完整性（用于自动化模式）"""
+        if self.feishu_app_id and not self.feishu_app_secret:
+            raise ConfigError("FEISHU_APP_ID provided but FEISHU_APP_SECRET missing")
+        if self.feishu_app_secret and not self.feishu_app_id:
+            raise ConfigError("FEISHU_APP_SECRET provided but FEISHU_APP_ID missing")
+        if self.feishu_chat_id and not (self.feishu_app_id and self.feishu_app_secret):
+            raise ConfigError("FEISHU_CHAT_ID provided but FEISHU_APP_ID or FEISHU_APP_SECRET missing")
+
+        # 验证钉钉webhook URL格式（如果提供）
+        if self.dingtalk_webhook:
+            if not self._is_valid_url(self.dingtalk_webhook):
+                raise ConfigError(f"Invalid DINGTALK_WEBHOOK URL format: {self.dingtalk_webhook}")
+
+        # 验证提取码格式（应该是4位数字）
+        if self.message_default_extraction_code:
+            if not re.match(r'^\d{4}$', self.message_default_extraction_code):
+                raise ConfigError(f"Invalid MESSAGE_DEFAULT_EXTRACTION_CODE format: {self.message_default_extraction_code}. Expected 4 digits.")
+
+    def _is_valid_url(self, url: str) -> bool:
+        """验证URL格式的有效性"""
+        try:
+            import urllib.parse
+            result = urllib.parse.urlparse(url)
+            return all([result.scheme, result.netloc]) and result.scheme in ['http', 'https']
+        except Exception:
+            return False
