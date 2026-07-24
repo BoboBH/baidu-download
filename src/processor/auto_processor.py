@@ -62,3 +62,25 @@ class AutoProcessor:
         """
         existing_message = self.db_repo.get_message_by_hash(message_hash)
         return existing_message is not None
+
+    def process_messages(self) -> int:
+        """
+        Main workflow orchestration method
+
+        Returns:
+            Exit code: 0 = success (even with partial failures),
+                  1 = critical system failure
+        """
+        try:
+            self.logger.info("Starting automatic message processing")
+
+            # Retrieve messages from Feishu
+            messages = self.feishu_client.get_messages()
+            self.logger.info(f"Retrieved {len(messages)} messages from Feishu")
+
+            # Process messages logic will be added in next tasks
+            return 0
+
+        except Exception as e:
+            self.logger.error(f"Critical failure during message processing: {e}")
+            return 1

@@ -63,3 +63,12 @@ class TestAutoProcessor:
         result = auto_processor._is_duplicate_message("new_message")
         assert result is False
         auto_processor.db_repo.get_message_by_hash.assert_called_once_with("new_message")
+
+    def test_process_messages_returns_exit_code(self, auto_processor):
+        """Test process_messages returns integer exit code"""
+        with patch.object(auto_processor, 'feishu_client') as mock_feishu:
+            mock_feishu.get_messages.return_value = []
+
+            exit_code = auto_processor.process_messages()
+            assert isinstance(exit_code, int)
+            assert exit_code in [0, 1]
