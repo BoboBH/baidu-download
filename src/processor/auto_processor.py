@@ -116,18 +116,53 @@ class AutoProcessor:
                         folder_name=parse_result.folder_name,
                         status="pending"
                     )
-                    self.db_repo.insert_message_log(message_log)
+                    message_id = self.db_repo.insert_message_log(message_log)
                     self.logger.info(f"Inserted new message: {parse_result.folder_name}")
 
-                    # Process logic will be added in next task
+                    # Update status to processing
+                    self.db_repo.update_message_status(message_hash, "processing")
+
+                    # Process via FileProcessor
+                    start_time = datetime.now()
+                    summary = self.file_processor.process_files(
+                        parse_result.share_link,
+                        parse_result.code,
+                        parse_result.folder_name
+                    )
+                    processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
+
+                    # Update database status based on result
+                    if summary and summary.SUCCESS_COUNT > 0:
+                        status = "success"
+                        error_message = None
+                    else:
+                        status = "failed"
+                        error_message = "File processing failed or no files transferred"
+
+                    self.db_repo.update_message_status(
+                        message_hash,
+                        status,
+                        error_message=error_message,
+                        processing_time=processing_time
+                    )
+
                     results.append(ProcessResult(
                         folder_name=parse_result.folder_name,
                         share_link=parse_result.share_link,
-                        status="pending"
+                        status=status,
+                        error_message=error_message,
+                        processing_time_ms=processing_time
                     ))
 
                 except Exception as e:
                     self.logger.error(f"Error processing individual message: {e}")
+                    # Update status to critical_error for this message
+                    if 'message_hash' in locals():
+                        self.db_repo.update_message_status(
+                            message_hash,
+                            "critical_error",
+                            error_message=str(e)
+                        )
                     continue
 
             return 0
