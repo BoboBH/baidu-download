@@ -45,3 +45,21 @@ class TestAutoProcessor:
         assert auto_processor.db_repo is not None
         assert auto_processor.file_processor is not None
         assert auto_processor.dingtalk_notifier is not None
+
+    def test_is_duplicate_message_true(self, auto_processor):
+        """Test duplicate message detection returns True for existing message"""
+        mock_message_log = Mock(spec=MessageProcessLog)
+        mock_message_log.message_hash = "abc123"
+        auto_processor.db_repo.get_message_by_hash = Mock(return_value=mock_message_log)
+
+        result = auto_processor._is_duplicate_message("abc123")
+        assert result is True
+        auto_processor.db_repo.get_message_by_hash.assert_called_once_with("abc123")
+
+    def test_is_duplicate_message_false(self, auto_processor):
+        """Test duplicate message detection returns False for new message"""
+        auto_processor.db_repo.get_message_by_hash = Mock(return_value=None)
+
+        result = auto_processor._is_duplicate_message("new_message")
+        assert result is False
+        auto_processor.db_repo.get_message_by_hash.assert_called_once_with("new_message")

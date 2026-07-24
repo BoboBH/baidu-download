@@ -49,3 +49,16 @@ class AutoProcessor:
         self.dingtalk_notifier = DingtalkNotifier(self.settings)
 
         self.logger.info("AutoProcessor initialized successfully")
+
+    def _is_duplicate_message(self, message_hash: str) -> bool:
+        """
+        Check if message was already processed
+
+        Args:
+            message_hash: MD5 hash of message content
+
+        Returns:
+            True if message exists in database, False otherwise
+        """
+        existing_message = self.db_repo.get_message_by_hash(message_hash)
+        return existing_message is not None
