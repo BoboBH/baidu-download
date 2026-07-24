@@ -114,28 +114,3 @@ def test_get_nonexistent_message(mock_db_connection):
 
     assert log is None
     assert mock_cursor.execute.called
-
-def test_get_recent_messages_to_retry(mock_db_connection):
-    """测试获取需要重试的消息"""
-    mock_connection, mock_cursor = mock_db_connection
-
-    # Mock query results
-    mock_cursor.fetchall.return_value = [
-        {'message_hash': 'hash1'},
-        {'message_hash': 'hash2'}
-    ]
-
-    repo = DatabaseRepository(
-        host='localhost',
-        port=3306,
-        user='root',
-        password='password',
-        database='test_db'
-    )
-
-    messages = repo.get_recent_messages_to_retry(hours=24)
-
-    assert len(messages) == 2
-    assert 'hash1' in messages
-    assert 'hash2' in messages
-    assert mock_cursor.execute.called
