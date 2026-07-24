@@ -7,6 +7,7 @@ import sys
 import argparse
 from pathlib import Path
 from src.processor.file_processor import FileProcessor
+from src.processor.auto_processor import AutoProcessor
 from src.config.settings import ConfigError
 from src.utils.logger import get_logger
 
@@ -19,27 +20,32 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 使用示例:
-  python main.py --link "https://pan.baidu.com/s/xxx" --code "1234" --folder "test"
-  python main.py -l "分享链接" -c "提取码" -f "目录名" --verbose
+  手动模式:
+    python main.py --link "https://pan.baidu.com/s/xxx" --code "1234" --folder "test"
+    python main.py -l "分享链接" -c "提取码" -f "目录名" --verbose
+
+  自动模式:
+    python main.py --auto
+    python main.py --auto --config "/path/to/config.env" --verbose
         '''
     )
 
     parser.add_argument(
         '--link', '-l',
-        required=True,
-        help='百度网盘分享链接'
+        required=False,
+        help='百度网盘分享链接（手动模式必需）'
     )
 
     parser.add_argument(
         '--code', '-c',
-        required=True,
-        help='分享链接提取码'
+        required=False,
+        help='分享链接提取码（手动模式必需）'
     )
 
     parser.add_argument(
         '--folder', '-f',
-        required=True,
-        help='目标目录名称'
+        required=False,
+        help='目标目录名称（手动模式必需）'
     )
 
     parser.add_argument(
@@ -57,6 +63,12 @@ def parse_arguments():
         '--verbose', '-v',
         action='store_true',
         help='显示详细日志'
+    )
+
+    parser.add_argument(
+        '--auto',
+        action='store_true',
+        help='自动模式：从飞书获取消息并自动处理（不需要手动指定链接、提取码和目录名）'
     )
 
     return parser.parse_args()
@@ -85,6 +97,23 @@ def main():
             settings = Settings()
 
         logger.info("配置验证通过")
+
+        # 自动模式处理
+        if args.auto:
+            logger.info("自动模式：开始自动处理飞书消息...")
+
+            # 创建AutoProcessor并执行
+            processor = AutoProcessor(settings)
+            exit_code = processor.process_messages()
+
+            return exit_code
+
+        # 手动模式：验证必需参数
+        if not args.link or not args.code or not args.folder:
+            logger.error("手动模式需要提供 --link, --code, 和 --folder 参数")
+            logger.error("使用 --auto 参数启用自动模式，或提供所有必需的手动参数")
+            return 1
+
         logger.info(f"分享链接: {args.link}")
         logger.info(f"提取码: {args.code}")
         logger.info(f"目录名: {args.folder}")
