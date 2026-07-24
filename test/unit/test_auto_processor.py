@@ -322,3 +322,109 @@ class TestAutoProcessor:
         """Test AutoProcessor can be imported from processor module"""
         from src.processor import AutoProcessor
         assert AutoProcessor is not None
+
+    def test_full_workflow_integration(self, auto_processor):
+        """Test complete workflow from message retrieval to notification"""
+        # Setup realistic message flow
+        mock_messages = [
+            {"message_id": "msg1", "content": '{"text":"260723：https://pan.baidu.com/s/success1"}'},
+            {"message_id": "msg2", "content": '{"text":"260724：https://pan.baidu.com/s/fail1"}'},
+            {"message_id": "msg3", "content": '{"text":"260725：https://pan.baidu.com/s/success2"}'},
+            {"message_id": "msg4", "content": '{"text":"invalid message format"}'},
+            {"message_id": "msg5", "content": '{"text":"260726：https://pan.baidu.com/s/duplicate"}'},
+        ]
+        auto_processor.feishu_client.get_messages = Mock(return_value=mock_messages)
+
+        # Setup parsing results (msg4 should fail to parse)
+        parse_results = [
+            Mock(folder_name="260723", share_link="https://pan.baidu.com/s/success1", code="0409"),
+            Mock(folder_name="260724", share_link="https://pan.baidu.com/s/fail1", code="0409"),
+            Mock(folder_name="260725", share_link="https://pan.baidu.com/s/success2", code="0409"),
+            None,  # Invalid format
+            Mock(folder_name="260726", share_link="https://pan.baidu.com/s/duplicate", code="0409"),
+        ]
+        auto_processor.message_parser.parse_message = Mock(side_effect=parse_results)
+        auto_processor.message_parser.calculate_message_hash = Mock(side_effect=["hash1", "hash2", "hash3", "hash5"])
+
+        # Setup duplicate check (msg5 is duplicate)
+        def duplicate_check(hash_val):
+            return hash_val == "hash5"
+        auto_processor._is_duplicate_message = Mock(side_effect=duplicate_check)
+        auto_processor.db_repo.insert_message_log = Mock(return_value=1)
+
+        # Setup FileProcessor results
+        file_processor_results = [
+            Mock(SUCCESS_COUNT=3, FAILED_COUNT=0),  # success1
+            Mock(SUCCESS_COUNT=0, FAILED_COUNT=2),  # fail1
+            Mock(SUCCESS_COUNT=5, FAILED_COUNT=0),  # success2
+        ]
+        auto_processor.file_processor.process_files = Mock(side_effect=file_processor_results)
+
+        # Mock notification
+        auto_processor._send_result_notification = Mock(return_value=True)
+
+        # Execute
+        exit_code = auto_processor.process_messages()
+
+        # Verify results
+        assert exit_code == 0  # Overall success despite some failures
+
+        # Should have parsed 5 messages, but skipped invalid and duplicate
+        assert auto_processor.message_parser.parse_message.call_count == 5
+        assert auto_processor.file_processor.process_files.call_count == 3  # Only non-duplicate valid messages
+
+        # Should have inserted 3 messages (skipped msg4 invalid, msg5 duplicate)
+        assert auto_processor.db_repo.insert_message_log.call_count == 3
+
+        # Should have sent notification
+        auto_processor._send_result_notification.assert_called_once()
+
+        # Verify notification results
+        notification_results = auto_processor._send_result_notification.call_args[0][0]
+        assert len(notification_results) == 4  # 2 success + 1 failed + 1 skipped
+
+        status_counts = {"success": 0, "failed": 0, "skipped": 0}
+        for result in notification_results:
+            status_counts[result.status] = status_counts.get(result.status, 0) + 1
+
+        assert status_counts["success"] == 2
+        assert status_counts["failed"] == 1
+        assert status_counts["skipped"] == 1
+
+    def test_handles_empty_message_list(self, auto_processor):
+        """Test handling of empty message list from Feishu"""
+        auto_processor.feishu_client.get_messages = Mock(return_value=[])
+        auto_processor._send_result_notification = Mock(return_value=True)
+
+        exit_code = auto_processor.process_messages()
+
+        # Should still succeed (0 messages processed is valid)
+        assert exit_code == 0
+        auto_processor._send_result_notification.assert_called_once_with([])
+
+    def test_continues_processing_after_individual_message_errors(self, auto_processor):
+        """Test that processing continues even when individual messages fail"""
+        mock_messages = [
+            {"message_id": "msg1", "content": '{"text":"260723：https://pan.baidu.com/s/abc1"}'},
+            {"message_id": "msg2", "content": '{"text":"260724：https://pan.baidu.com/s/abc2"}'},
+            {"message_id": "msg3", "content": '{"text":"260725：https://pan.baidu.com/s/abc3"}'},
+        ]
+        auto_processor.feishu_client.get_messages = Mock(return_value=mock_messages)
+
+        auto_processor.message_parser.parse_message = Mock(side_effect=[
+            Mock(folder_name="260723", share_link="https://pan.baidu.com/s/abc1", code="0409"),
+            Exception("Parse error"),  # Second message fails during parsing
+            Mock(folder_name="260725", share_link="https://pan.baidu.com/s/abc3", code="0409"),
+        ])
+        auto_processor.message_parser.calculate_message_hash = Mock(side_effect=["hash1", "hash3"])
+        auto_processor._is_duplicate_message = Mock(return_value=False)
+        auto_processor.db_repo.insert_message_log = Mock(return_value=1)
+
+        auto_processor.file_processor.process_files = Mock(return_value=Mock(SUCCESS_COUNT=1, FAILED_COUNT=0))
+        auto_processor._send_result_notification = Mock(return_value=True)
+
+        exit_code = auto_processor.process_messages()
+
+        # Should still succeed and process remaining messages
+        assert exit_code == 0
+        assert auto_processor.file_processor.process_files.call_count == 2  # msg1 and msg3
