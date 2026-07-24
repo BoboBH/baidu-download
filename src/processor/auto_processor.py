@@ -74,6 +74,7 @@ class AutoProcessor:
         """
         try:
             self.logger.info("Starting automatic message processing")
+            start_time = datetime.now()
 
             # Retrieve messages from Feishu
             messages = self.feishu_client.get_messages()
@@ -165,6 +166,10 @@ class AutoProcessor:
                         )
                     continue
 
+            # Send notification
+            self._send_result_notification(results)
+
+            self.logger.info(f"Processing completed in {int((datetime.now() - start_time).total_seconds())}s")
             return 0
 
         except Exception as e:

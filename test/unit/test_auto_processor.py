@@ -238,3 +238,38 @@ class TestAutoProcessor:
 
         # Should return False but not raise exception
         assert result is False
+
+    def test_process_messages_sends_notification(self, auto_processor):
+        """Test process_messages sends notification at the end"""
+        mock_messages = [
+            {"message_id": "msg1", "content": '{"text":"260723：https://pan.baidu.com/s/abc123"}'},
+        ]
+        auto_processor.feishu_client.get_messages = Mock(return_value=mock_messages)
+
+        mock_parse_result = Mock()
+        mock_parse_result.folder_name = "260723"
+        mock_parse_result.share_link = "https://pan.baidu.com/s/abc123"
+        mock_parse_result.code = "0409"
+        auto_processor.message_parser.parse_message = Mock(return_value=mock_parse_result)
+        auto_processor.message_parser.calculate_message_hash = Mock(return_value="hash123")
+        auto_processor._is_duplicate_message = Mock(return_value=False)
+        auto_processor.db_repo.insert_message_log = Mock(return_value=1)
+
+        mock_summary = Mock(spec=ExecutionSummary)
+        mock_summary.SUCCESS_COUNT = 5
+        mock_summary.FAILED_COUNT = 0
+        auto_processor.file_processor.process_files = Mock(return_value=mock_summary)
+
+        # Mock notification
+        auto_processor._send_result_notification = Mock(return_value=True)
+
+        exit_code = auto_processor.process_messages()
+
+        assert exit_code == 0
+        auto_processor._send_result_notification.assert_called_once()
+
+        # Verify results passed to notification
+        call_args = auto_processor._send_result_notification.call_args
+        results = call_args[0][0]
+        assert len(results) == 1
+        assert results[0].folder_name == "260723"
