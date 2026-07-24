@@ -251,7 +251,7 @@ notepad .env
 mysql -u root -p
 
 # 2. Run initialization script
-source D:/baidu-auto/middle/db_init.sql
+source D:\\baidu-auto\\middle\\db_init.sql
 
 # 3. Verify tables created
 USE baidu_download;
@@ -289,7 +289,7 @@ python -c "from src.feishu.feishu_client import FeishuMessageClient; from src.co
 mysql -u root -p -e "USE baidu_download; SELECT COUNT(*) FROM message_process_log;"
 
 # Test SFTP connection
-python diagnose_sftp.py
+python test\diagnostic\diagnose_sftp.py
 ```
 
 ---
@@ -492,6 +492,48 @@ The system returns specific exit codes for monitoring:
 
 **Note**: Exit code 0 does not mean all files succeeded - it means the system functioned correctly even if individual file transfers failed. Check DingTalk notifications or database for detailed results.
 
+#### Exit Code Examples
+
+**Exit Code 0 Scenarios:**
+- ✅ All messages processed successfully
+- ✅ Some messages failed but system handled errors gracefully
+- ✅ No critical system errors occurred
+- ✅ Processing completed even if individual file transfers failed
+
+**Example: Exit Code 0 with Partial Failures**
+```bash
+# Console output shows individual failures but system exits with 0
+[INFO] Processing completed with 12 success, 2 failed, 1 skipped
+[INFO] DingTalk notification sent successfully
+# System returns exit code 0 because overall operation completed
+```
+
+**Exit Code 1 Scenarios:**
+- ❌ Configuration validation failed (missing Feishu credentials)
+- ❌ Database connection failure
+- ❌ Critical API authentication errors (Feishu token cannot be obtained)
+- ❌ System-level exceptions that prevent any message processing
+
+**Example: Exit Code 1 with Critical Failure**
+```bash
+# Console output shows critical system failure
+[ERROR] Configuration error: FEISHU_APP_ID is required
+# System returns exit code 1 because operation cannot proceed
+```
+
+**Exit Code 130 Scenarios:**
+- ⚠️ User pressed Ctrl+C to interrupt processing
+- ⚠️ Manual cancellation during operation
+
+**Example: Exit Code 130 with User Interruption**
+```bash
+# Console output shows user interruption
+[INFO] Processing 15 messages...
+^C[INFO] User interrupt received
+[INFO] User interrupted operation
+# System returns exit code 130 to indicate manual cancellation
+```
+
 ---
 
 ## 📈 Monitoring
@@ -609,6 +651,8 @@ Create `health_check.bat` for automated monitoring:
 
 ```batch
 @echo off
+setlocal
+set DB_PASSWORD=your_actual_password_here
 set ERROR_COUNT=0
 
 echo Checking log files...
@@ -634,12 +678,14 @@ if %errorlevel% neq 0 (
 
 if %ERROR_COUNT% gtr 0 (
     echo [ALERT] System health check failed with %ERROR_COUNT% issues
-    exit /b 1
+    endlocal & exit /b 1
 ) else (
     echo [OK] All health checks passed
-    exit /b 0
+    endlocal & exit /b 0
 )
 ```
+
+**Note**: Replace `your_actual_password_here` with your actual MySQL password from the `.env` file. For better security in production, consider using Windows Credential Manager or reading credentials directly from the `.env` file using batch file parsing.
 
 ---
 
@@ -832,7 +878,7 @@ type baidu-cookies.txt
 BaiduPCS-Go.exe download https://pan.baidu.com/s/1ABC
 
 # 3. Check SFTP connectivity
-python diagnose_sftp.py
+python test\diagnostic\diagnose_sftp.py
 
 # 4. Verify sufficient disk space
 dir
@@ -889,10 +935,14 @@ type .env | findstr "DINGTALK"
 
 ### Diagnostic Commands
 
+**Note**: The following diagnostic scripts are included in the project:
+- `diagnose_mysql.py` - Available in project root for MySQL database diagnostics
+- `diagnose_sftp.py` - Available in `test/diagnostic/` directory for SFTP connectivity testing
+
 ```bash
 # Full system diagnostic
 python diagnose_mysql.py
-python diagnose_sftp.py
+python test/diagnostic/diagnose_sftp.py
 
 # Check all log levels
 findstr /i "INFO\|WARNING\|ERROR" logs\transfer.log
