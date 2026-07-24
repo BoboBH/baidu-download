@@ -1,0 +1,15 @@
+# Development dependencies for baidu-download system
+# Install with: pip install -r requirements-dev.txt
+
+# Include production dependencies
+-r requirements.txt
+
+# Testing dependencies
+pytest==7.4.0
+pytest-mock==3.11.1
+
+# Code quality and development tools (optional additions)
+# pytest-cov==4.1.0
+# black==23.7.0
+# flake8==6.1.0
+# mypy==1.5.1

@@ -1,6 +1,10 @@
+# Production dependencies for baidu-download system
+# Core dependencies
 paramiko>=2.12.0
 pymysql>=1.1.1
 python-dotenv>=1.0.1
 colorama==0.4.6
-pytest==7.4.0
-pytest-mock==3.11.1
+requests>=2.28.0
+
+# SFTP client dependency (pysftp is a wrapper around paramiko)
+pysftp>=0.2.9

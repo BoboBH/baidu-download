@@ -91,9 +91,6 @@ a = Analysis(
         'pandas',
         'scipy',
         'PIL',
-        'IPython',
-        'notebook',
-        'pytest',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -131,8 +128,8 @@ exe = EXE(
     entitlements_file=None,
 
     # Windows可执行文件元数据
-    version=None,  # 可以添加version info文件
-    icon=None,     # 可以添加.ico图标文件
+    version='version_info.txt',  # 版本信息文件
+    icon=None,  # 图标文件 (可选: 如果有.ico文件可添加路径)
 )
 
 # ============================================================================

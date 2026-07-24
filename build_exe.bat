@@ -194,48 +194,13 @@ REM ============================================================================
 
 call :print_section "Step 5: 部署后处理"
 
-REM 创建部署目录结构
-set "DEPLOY_DIR=%DIST_DIR%\deployment"
-if not exist "%DEPLOY_DIR%" (
-    mkdir "%DEPLOY_DIR%"
-    call :print_info "创建部署目录: %DEPLOY_DIR%"
-)
-
-REM 复制配置文件模板
+REM 复制配置文件模板到构建目录 (简化部署)
 if exist ".env.example" (
-    copy ".env.example" "%DEPLOY_DIR%\.env.example" >nul
-    call :print_info "已复制: .env.example"
+    copy ".env.example" "%DIST_DIR%\.env.example" >nul
+    call :print_info "已复制: .env.example 到构建目录"
 )
 
-REM 复制数据库初始化脚本
-if not exist "%DEPLOY_DIR%\middle" mkdir "%DEPLOY_DIR%\middle"
-if exist "middle\db_init.sql" (
-    copy "middle\db_init.sql" "%DEPLOY_DIR%\middle\db_init.sql" >nul
-    call :print_info "已复制: middle\db_init.sql"
-)
-
-REM 创建README文件
-(
-echo ============================================================
-echo 百度网盘PDF文件自动传输系统 - Windows部署包
-echo ============================================================
-echo.
-echo 文件说明:
-echo   baidu-download.exe  - 主程序可执行文件
-echo   .env.example        - 配置文件模板
-echo   middle\             - 数据库脚本目录
-echo.
-echo 快速开始:
-echo 1. 复制 .env.example 为 .env
-echo 2. 编辑 .env 文件，配置您的环境参数
-echo 3. 运行: baidu-download.exe --help
-echo.
-echo 详细文档: 请参考项目文档
-echo 版本: 1.1.5
-echo ============================================================
-) > "%DEPLOY_DIR%\README.txt"
-
-call :print_info "已创建部署说明文件"
+REM PyInstaller会自动包含所有必要文件，无需手动创建复杂目录结构
 
 REM ============================================================================
 REM Step 6: 构建完成总结
@@ -256,17 +221,8 @@ echo 3. 测试可执行文件
 echo 4. 设置Windows任务计划程序 (如需要)
 echo.
 
-REM 询问是否运行测试
-set /p "RUN_TEST=是否运行可执行文件进行测试? (y/n): "
-if /i "%RUN_TEST%"=="y" (
-    call :print_section "运行可执行文件测试"
-    echo 注意: 可执行文件需要正确的配置才能正常运行
-    echo.
-    cd "%DIST_DIR%"
-    "%PROJECT_NAME%.exe" --help
-    cd "%~dp0"
-)
-
+call :print_info "构建完成！可执行文件位于: %DIST_DIR%\%PROJECT_NAME%.exe"
+call :print_info "配置说明请参考: BUILD_README.md"
 call :print_info "构建脚本执行完成"
 goto :eof
 
