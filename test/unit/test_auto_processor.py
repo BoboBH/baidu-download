@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
-from src.processor.auto_processor import AutoProcessor
+from src.processor.auto_processor import AutoProcessor, ProcessResult
 from src.database.message_models import MessageProcessLog
 from src.database.models import ExecutionSummary
 
@@ -181,3 +181,60 @@ class TestAutoProcessor:
 
         # Should still return 0 (success with partial failures)
         assert exit_code == 0
+
+    def test_send_result_notification_success(self, auto_processor):
+        """Test notification formatting for successful processing"""
+        results = [
+            ProcessResult(folder_name="260723", share_link="https://pan.baidu.com/s/abc1", status="success"),
+            ProcessResult(folder_name="260724", share_link="https://pan.baidu.com/s/abc2", status="success"),
+        ]
+
+        auto_processor.dingtalk_notifier.send_notification = Mock(return_value=True)
+
+        result = auto_processor._send_result_notification(results)
+
+        assert result is True
+        auto_processor.dingtalk_notifier.send_notification.assert_called_once()
+
+        # Verify notification content
+        call_args = auto_processor.dingtalk_notifier.send_notification.call_args
+        title = call_args[0][0]
+        content = call_args[0][1]
+
+        assert "成功" in title or "处理报告" in title
+        assert "2 条消息" in content or "2" in content
+        assert "260723" in content
+        assert "260724" in content
+
+    def test_send_result_notification_with_failures(self, auto_processor):
+        """Test notification formatting includes failures"""
+        results = [
+            ProcessResult(folder_name="260723", share_link="https://pan.baidu.com/s/abc1", status="success"),
+            ProcessResult(folder_name="260724", share_link="https://pan.baidu.com/s/abc2", status="failed", error_message="Download timeout"),
+        ]
+
+        auto_processor.dingtalk_notifier.send_notification = Mock(return_value=True)
+
+        result = auto_processor._send_result_notification(results)
+
+        assert result is True
+
+        # Verify error messages included
+        call_args = auto_processor.dingtalk_notifier.send_notification.call_args
+        content = call_args[0][1]
+
+        assert "失败" in content
+        assert "Download timeout" in content or "timeout" in content.lower()
+
+    def test_send_result_notification_failure_handling(self, auto_processor):
+        """Test notification failure is handled gracefully"""
+        results = [
+            ProcessResult(folder_name="260723", share_link="https://pan.baidu.com/s/abc1", status="success"),
+        ]
+
+        auto_processor.dingtalk_notifier.send_notification = Mock(return_value=False)
+
+        result = auto_processor._send_result_notification(results)
+
+        # Should return False but not raise exception
+        assert result is False

@@ -170,3 +170,84 @@ class AutoProcessor:
         except Exception as e:
             self.logger.error(f"Critical failure during message processing: {e}")
             return 1
+
+    def _send_result_notification(self, results: List[ProcessResult]) -> bool:
+        """
+        Format and send notification to DingTalk
+
+        Args:
+            results: List of processing results
+
+        Returns:
+            True if notification sent successfully, False otherwise
+        """
+        try:
+            # Count results by status
+            success_count = sum(1 for r in results if r.status == "success")
+            failed_count = sum(1 for r in results if r.status == "failed")
+            skipped_count = sum(1 for r in results if r.status == "skipped")
+            total_count = len(results)
+
+            # Build notification content
+            content_lines = [
+                "## 处理结果摘要",
+                "",
+                f"- 总计处理: {total_count} 条消息",
+                f"- 成功: {success_count} 条",
+                f"- 失败: {failed_count} 条",
+                f"- 跳过: {skipped_count} 条",
+            ]
+
+            # Add successful processing details
+            success_results = [r for r in results if r.status == "success"]
+            if success_results:
+                content_lines.extend([
+                    "",
+                    "## 成功处理",
+                    ""
+                ])
+                for result in success_results:
+                    content_lines.append(f"✅ {result.folder_name} - 文件传输成功")
+
+            # Add failed processing details
+            failed_results = [r for r in results if r.status == "failed"]
+            if failed_results:
+                content_lines.extend([
+                    "",
+                    "## 处理失败",
+                    ""
+                ])
+                for result in failed_results:
+                    error_msg = result.error_message or "未知错误"
+                    content_lines.append(f"❌ {result.folder_name} - {error_msg}")
+
+            # Add timestamp
+            content_lines.extend([
+                "",
+                f"## 处理时间",
+                "",
+                f"完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            ])
+
+            content = "\n".join(content_lines)
+
+            # Send notification
+            title = "百度网盘文件处理报告"
+            success = self.dingtalk_notifier.send_notification(title, content)
+
+            if success:
+                self.logger.info("DingTalk notification sent successfully")
+            else:
+                self.logger.warning("Failed to send DingTalk notification")
+
+            return success
+
+        except Exception as e:
+            self.logger.error(f"Error sending notification: {e}")
+            return False
+
+            return 0
+
+        except Exception as e:
+            self.logger.error(f"Critical failure during message processing: {e}")
+            return 1
