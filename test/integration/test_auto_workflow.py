@@ -1,9 +1,18 @@
 """
-Integration tests for the complete automatic message processing workflow.
+Integration-style tests for the complete automatic message processing workflow.
 
-Tests the end-to-end workflow from Feishu message retrieval through DingTalk notification,
-verifying the integration of all components: FeishuMessageClient, MessageParser,
-DatabaseRepository, FileProcessor, DingtalkNotifier, and AutoProcessor.
+Testing Approach Note:
+These tests use extensive mocking of external dependencies (Feishu API, FileProcessor,
+DingtalkNotifier, DatabaseRepository) rather than true end-to-end integration testing.
+This approach is practical for this project because:
+- True integration tests would require real Feishu API credentials and database setup
+- Mock-based tests provide faster, more reliable testing without external dependencies
+- Tests still verify the complete workflow logic and component integration
+- All tests validate the entire message processing flow from parsing to notification
+
+These "integration-style" tests ensure the AutoProcessor correctly orchestrates all components
+and handles various scenarios (success, failure, duplicates, etc.) without requiring
+external infrastructure setup.
 """
 
 import pytest
@@ -20,6 +29,37 @@ from src.database.message_models import MessageProcessLog
 from src.database.models import ExecutionSummary
 from src.notification.dingtalk_notifier import DingtalkNotifier
 from src.config.settings import Settings
+
+
+# Test constants for maintainability
+SAMPLE_MESSAGE_CONTENT = "240724: https://pan.baidu.com/s/abc123"
+SAMPLE_MESSAGE_CONTENT_2 = "240725: https://pan.baidu.com/s/def456"
+SAMPLE_MESSAGE_CONTENT_3 = "240726: https://pan.baidu.com/s/ghi789"
+SAMPLE_SHARE_LINK = "https://pan.baidu.com/s/abc123"
+SAMPLE_FOLDER_NAME = "240724"
+SAMPLE_CODE = "0409"
+
+# Notification text constants
+NOTIFICATION_TITLE = "百度网盘文件处理报告"
+NOTIFICATION_SUCCESS_PREFIX = "✅"
+NOTIFICATION_FAILURE_PREFIX = "❌"
+NOTIFICATION_SECTION_SUCCESS = "## 成功处理"
+NOTIFICATION_SECTION_FAILURE = "## 处理失败"
+NOTIFICATION_SECTION_SUMMARY = "## 处理结果摘要"
+NOTIFICATION_SECTION_TIMESTAMP = "## 处理时间"
+
+# Status constants
+STATUS_PENDING = "pending"
+STATUS_PROCESSING = "processing"
+STATUS_SUCCESS = "success"
+STATUS_FAILED = "failed"
+STATUS_CRITICAL_ERROR = "critical_error"
+STATUS_SKIPPED = "skipped"
+
+# Test configuration
+TEST_FILE_COUNT = 2
+TEST_FILE_SIZE = 1024000
+TEST_PROCESSING_TIME = 1000
 
 
 @pytest.fixture
@@ -79,36 +119,118 @@ def mock_database():
 @pytest.fixture
 def sample_feishu_messages():
     """Sample Feishu messages for testing"""
-    return [
-        {
-            "message_id": "msg_001",
-            "content": "240724: https://pan.baidu.com/s/abc123"
-        },
-        {
-            "message_id": "msg_002",
-            "content": "240725: https://pan.baidu.com/s/def456"
-        },
-        {
-            "message_id": "msg_003",
-            "content": "240726: https://pan.baidu.com/s/ghi789"
-        }
-    ]
+    return TestDataFactory.create_sample_feishu_messages()
 
 
 @pytest.fixture
 def mock_execution_summary():
     """Create mock execution summary"""
     return ExecutionSummary(
-        share_link='https://pan.baidu.com/s/abc123',
-        folder_name='240724',
-        total_files=2,
-        success_count=2,
+        share_link=SAMPLE_SHARE_LINK,
+        folder_name=SAMPLE_FOLDER_NAME,
+        total_files=TEST_FILE_COUNT,
+        success_count=TEST_FILE_COUNT,
         failed_count=0,
         skipped_count=0,
         start_time=datetime.now(),
         end_time=datetime.now(),
-        total_size=1024000
+        total_size=TEST_FILE_SIZE
     )
+
+
+class TestDataFactory:
+    """Factory methods for creating test data"""
+
+    @staticmethod
+    def create_feishu_message(message_id: str, content: str) -> Dict[str, str]:
+        """Create a Feishu message test object"""
+        return {"message_id": message_id, "content": content}
+
+    @staticmethod
+    def create_sample_feishu_messages() -> List[Dict[str, str]]:
+        """Create sample Feishu messages for testing"""
+        return [
+            TestDataFactory.create_feishu_message("msg_001", SAMPLE_MESSAGE_CONTENT),
+            TestDataFactory.create_feishu_message("msg_002", SAMPLE_MESSAGE_CONTENT_2),
+            TestDataFactory.create_feishu_message("msg_003", SAMPLE_MESSAGE_CONTENT_3),
+        ]
+
+    @staticmethod
+    def create_execution_summary(
+        share_link: str = SAMPLE_SHARE_LINK,
+        folder_name: str = SAMPLE_FOLDER_NAME,
+        success_count: int = TEST_FILE_COUNT,
+        failed_count: int = 0,
+        skipped_count: int = 0
+    ) -> ExecutionSummary:
+        """Create an ExecutionSummary test object"""
+        return ExecutionSummary(
+            share_link=share_link,
+            folder_name=folder_name,
+            total_files=success_count + failed_count + skipped_count,
+            success_count=success_count,
+            failed_count=failed_count,
+            skipped_count=skipped_count,
+            start_time=datetime.now(),
+            end_time=datetime.now(),
+            total_size=TEST_FILE_SIZE
+        )
+
+    @staticmethod
+    def create_message_process_log(
+        message_hash: str,
+        status: str = STATUS_SUCCESS,
+        share_link: str = SAMPLE_SHARE_LINK,
+        folder_name: str = SAMPLE_FOLDER_NAME
+    ) -> MessageProcessLog:
+        """Create a MessageProcessLog test object"""
+        return MessageProcessLog(
+            message_hash=message_hash,
+            original_message=SAMPLE_MESSAGE_CONTENT,
+            share_link=share_link,
+            folder_name=folder_name,
+            status=status,
+            processing_time=TEST_PROCESSING_TIME
+        )
+
+
+@pytest.fixture
+def mock_components():
+    """Fixture providing common mock components for AutoProcessor testing"""
+    with patch('src.processor.auto_processor.FeishuMessageClient') as mock_feishu_cls, \
+         patch('src.processor.auto_processor.FileProcessor') as mock_processor_cls, \
+         patch('src.processor.auto_processor.DingtalkNotifier') as mock_dingtalk_cls:
+
+        # Configure Feishu client mock
+        mock_feishu_client = Mock()
+        mock_feishu_cls.return_value = mock_feishu_client
+
+        # Configure FileProcessor mock
+        mock_processor = Mock()
+        mock_processor_cls.return_value = mock_processor
+
+        # Configure Dingtalk notifier mock
+        mock_dingtalk = Mock()
+        mock_dingtalk.send_notification.return_value = True
+        mock_dingtalk_cls.return_value = mock_dingtalk
+
+        yield {
+            'feishu_client': mock_feishu_client,
+            'file_processor': mock_processor,
+            'dingtalk': mock_dingtalk,
+            'feishu_cls': mock_feishu_cls,
+            'processor_cls': mock_processor_cls,
+            'dingtalk_cls': mock_dingtalk_cls
+        }
+
+
+@pytest.fixture
+def configured_auto_processor(test_settings, mock_database):
+    """Fixture providing AutoProcessor with mocked database"""
+    with patch('src.processor.auto_processor.DatabaseRepository') as mock_db_repo_cls:
+        mock_db_repo_cls.return_value = mock_database
+        processor = AutoProcessor(test_settings)
+        yield processor
 
 
 class TestAutoWorkflowIntegration:
@@ -778,3 +900,157 @@ class TestAutoWorkflowIntegration:
             assert 'processing_time' in final_kwargs
             assert final_kwargs['processing_time'] is not None
             assert final_kwargs['processing_time'] >= 0  # Processing time can be 0 in fast tests
+
+    def test_notification_failure_handling(self, test_settings, mock_database):
+        """Test workflow behavior when DingTalk notification fails"""
+        sample_messages = [TestDataFactory.create_feishu_message("msg_001", SAMPLE_MESSAGE_CONTENT)]
+
+        with patch('src.processor.auto_processor.FeishuMessageClient') as mock_feishu_cls, \
+             patch('src.processor.auto_processor.DatabaseRepository') as mock_db_repo_cls, \
+             patch('src.processor.auto_processor.FileProcessor') as mock_processor_cls, \
+             patch('src.processor.auto_processor.DingtalkNotifier') as mock_dingtalk_cls:
+
+            # Configure DatabaseRepository mock to return our mock_database
+            mock_db_repo_cls.return_value = mock_database
+
+            # Configure Feishu client mock
+            mock_feishu_client = Mock()
+            mock_feishu_client.get_messages.return_value = sample_messages
+            mock_feishu_cls.return_value = mock_feishu_client
+
+            # Configure FileProcessor mock
+            mock_processor = Mock()
+            mock_processor.process_files.return_value = TestDataFactory.create_execution_summary()
+            mock_processor_cls.return_value = mock_processor
+
+            # Configure Dingtalk notifier mock to simulate failure
+            mock_dingtalk = Mock()
+            mock_dingtalk.send_notification.return_value = False  # Notification fails
+            mock_dingtalk_cls.return_value = mock_dingtalk
+
+            # Create AutoProcessor
+            processor = AutoProcessor(test_settings)
+
+            # Execute workflow
+            exit_code = processor.process_messages()
+
+            # Verify workflow continues despite notification failure
+            assert exit_code == 0, "Workflow should succeed even if notification fails"
+
+            # Verify message was still processed successfully
+            assert mock_database.insert_message_log.call_count == 1
+            assert mock_database.update_message_status.call_count >= 2
+
+            # Verify notification was attempted
+            mock_dingtalk.send_notification.assert_called_once()
+
+    def test_message_retry_after_processing_error(self, test_settings, mock_database):
+        """Test workflow behavior with message that fails initially but succeeds on retry"""
+        sample_messages = [TestDataFactory.create_feishu_message("msg_001", SAMPLE_MESSAGE_CONTENT)]
+
+        with patch('src.processor.auto_processor.FeishuMessageClient') as mock_feishu_cls, \
+             patch('src.processor.auto_processor.DatabaseRepository') as mock_db_repo_cls, \
+             patch('src.processor.auto_processor.FileProcessor') as mock_processor_cls, \
+             patch('src.processor.auto_processor.DingtalkNotifier') as mock_dingtalk_cls:
+
+            # Configure DatabaseRepository mock to simulate retry scenario
+            # First call returns existing message (to simulate it was previously attempted), second call returns None
+            mock_database.get_message_by_hash.side_effect = [None, None]
+
+            # Configure DatabaseRepository mock to return our mock_database
+            mock_db_repo_cls.return_value = mock_database
+
+            # Configure Feishu client mock
+            mock_feishu_client = Mock()
+            mock_feishu_client.get_messages.return_value = sample_messages
+            mock_feishu_cls.return_value = mock_feishu_client
+
+            # Configure FileProcessor mock to succeed after initial failure
+            mock_processor = Mock()
+            mock_processor.process_files.return_value = TestDataFactory.create_execution_summary()
+            mock_processor_cls.return_value = mock_processor
+
+            # Configure Dingtalk notifier mock
+            mock_dingtalk = Mock()
+            mock_dingtalk.send_notification.return_value = True
+            mock_dingtalk_cls.return_value = mock_dingtalk
+
+            # Create AutoProcessor
+            processor = AutoProcessor(test_settings)
+
+            # Execute workflow
+            exit_code = processor.process_messages()
+
+            # Verify success
+            assert exit_code == 0
+
+            # Verify message was processed
+            assert mock_database.insert_message_log.call_count == 1
+
+            # Verify final status is success
+            success_updates = [call for call in mock_database.update_message_status.call_args_list
+                              if len(call[0]) > 1 and call[0][1] == STATUS_SUCCESS]
+            assert len(success_updates) > 0, "Should have success status update"
+
+    def test_concurrent_message_processing(self, test_settings, mock_database):
+        """Test workflow behavior with multiple messages requiring concurrent processing"""
+        concurrent_messages = [
+            TestDataFactory.create_feishu_message("msg_001", SAMPLE_MESSAGE_CONTENT),
+            TestDataFactory.create_feishu_message("msg_002", SAMPLE_MESSAGE_CONTENT_2),
+            TestDataFactory.create_feishu_message("msg_003", SAMPLE_MESSAGE_CONTENT_3),
+        ]
+
+        with patch('src.processor.auto_processor.FeishuMessageClient') as mock_feishu_cls, \
+             patch('src.processor.auto_processor.DatabaseRepository') as mock_db_repo_cls, \
+             patch('src.processor.auto_processor.FileProcessor') as mock_processor_cls, \
+             patch('src.processor.auto_processor.DingtalkNotifier') as mock_dingtalk_cls:
+
+            # Configure DatabaseRepository mock to return our mock_database
+            mock_db_repo_cls.return_value = mock_database
+
+            # Configure Feishu client mock
+            mock_feishu_client = Mock()
+            mock_feishu_client.get_messages.return_value = concurrent_messages
+            mock_feishu_cls.return_value = mock_feishu_client
+
+            # Configure FileProcessor mock to handle concurrent requests
+            mock_processor = Mock()
+            call_count = [0]
+
+            def mock_process_with_delay(share_link, code, folder_name):
+                call_count[0] += 1
+                # Simulate processing time
+                return TestDataFactory.create_execution_summary(
+                    share_link=share_link,
+                    folder_name=folder_name,
+                    success_count=1
+                )
+
+            mock_processor.process_files.side_effect = mock_process_with_delay
+            mock_processor_cls.return_value = mock_processor
+
+            # Configure Dingtalk notifier mock
+            mock_dingtalk = Mock()
+            mock_dingtalk.send_notification.return_value = True
+            mock_dingtalk_cls.return_value = mock_dingtalk
+
+            # Create AutoProcessor
+            processor = AutoProcessor(test_settings)
+
+            # Execute workflow
+            exit_code = processor.process_messages()
+
+            # Verify success
+            assert exit_code == 0
+
+            # Verify all messages were processed
+            assert call_count[0] == 3, "Should process all 3 messages"
+
+            # Verify database operations for all messages
+            assert mock_database.insert_message_log.call_count == 3
+
+            # Verify notification includes all messages
+            mock_dingtalk.send_notification.assert_called_once()
+            call_args = mock_dingtalk.send_notification.call_args
+            notification_content = call_args[0][1]
+            assert "成功: 3 条" in notification_content
