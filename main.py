@@ -5,15 +5,16 @@
 
 import sys
 import argparse
+from typing import Optional
 from pathlib import Path
 from src.processor.file_processor import FileProcessor
 from src.processor.auto_processor import AutoProcessor
-from src.config.settings import ConfigError
+from src.config.settings import ConfigError, Settings
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-def parse_arguments():
+def parse_arguments() -> argparse.Namespace:
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
         description='百度网盘PDF文件自动传输系统',
@@ -73,11 +74,11 @@ def parse_arguments():
 
     return parser.parse_args()
 
-def main():
+def main() -> int:
     """主函数"""
     try:
         # 解析命令行参数
-        args = parse_arguments()
+        args: argparse.Namespace = parse_arguments()
 
         # 设置日志级别
         if args.verbose:
@@ -89,11 +90,10 @@ def main():
 
         # 验证配置
         logger.info("验证配置...")
+        settings: Settings
         if args.config:
-            from src.config.settings import Settings
             settings = Settings(args.config)
         else:
-            from src.config.settings import Settings
             settings = Settings()
 
         logger.info("配置验证通过")
@@ -103,8 +103,8 @@ def main():
             logger.info("自动模式：开始自动处理飞书消息...")
 
             # 创建AutoProcessor并执行
-            processor = AutoProcessor(settings)
-            exit_code = processor.process_messages()
+            processor: AutoProcessor = AutoProcessor(settings)
+            exit_code: int = processor.process_messages()
 
             return exit_code
 

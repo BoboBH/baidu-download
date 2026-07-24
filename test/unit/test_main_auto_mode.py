@@ -16,8 +16,6 @@ class TestMainAutoMode:
     def test_auto_flag_triggers_auto_processor(self, mock_parse_args, mock_auto_processor_class, mock_settings):
         """
         Test that --auto flag triggers AutoProcessor instead of FileProcessor
-
-        This is the RED phase - test should fail because --auto flag doesn't exist yet
         """
         # Setup mock arguments with --auto flag
         mock_args = MagicMock()
@@ -206,6 +204,90 @@ class TestMainAutoMode:
 
         # Verify exit code is 0 (success)
         assert exit_code == 0
+
+
+class TestMainAutoModeExceptionHandling:
+    """Test suite for exception handling in automatic mode"""
+
+    @patch('main.Settings')
+    @patch('main.AutoProcessor')
+    @patch('main.parse_arguments')
+    def test_auto_mode_handles_config_error(self, mock_parse_args, mock_auto_processor_class, mock_settings):
+        """
+        Test that auto mode handles ConfigError correctly
+        """
+        # Setup mock arguments with --auto flag
+        mock_args = MagicMock()
+        mock_args.auto = True
+        mock_args.config = None
+        mock_args.verbose = False
+        mock_parse_args.return_value = mock_args
+
+        # Setup mock Settings to raise ConfigError during instantiation
+        from src.config.settings import ConfigError
+        mock_settings.side_effect = ConfigError("Invalid configuration")
+
+        # Import and run main function
+        import main
+        exit_code = main.main()
+
+        # Verify exit code is 1 (error)
+        assert exit_code == 1
+
+        # Verify that AutoProcessor was not called due to config error
+        mock_auto_processor_class.assert_not_called()
+
+    @patch('src.config.settings.Settings')
+    @patch('main.AutoProcessor')
+    @patch('main.parse_arguments')
+    def test_auto_mode_handles_keyboard_interrupt(self, mock_parse_args, mock_auto_processor_class, mock_settings):
+        """
+        Test that auto mode handles KeyboardInterrupt correctly
+        """
+        # Setup mock arguments with --auto flag
+        mock_args = MagicMock()
+        mock_args.auto = True
+        mock_args.config = None
+        mock_args.verbose = False
+        mock_parse_args.return_value = mock_args
+
+        # Setup mock AutoProcessor to raise KeyboardInterrupt
+        mock_auto_processor_instance = MagicMock()
+        mock_auto_processor_class.return_value = mock_auto_processor_instance
+        mock_auto_processor_instance.process_messages.side_effect = KeyboardInterrupt()
+
+        # Import and run main function
+        import main
+        exit_code = main.main()
+
+        # Verify exit code is 130 (user interrupt)
+        assert exit_code == 130
+
+    @patch('src.config.settings.Settings')
+    @patch('main.AutoProcessor')
+    @patch('main.parse_arguments')
+    def test_auto_mode_handles_generic_exception(self, mock_parse_args, mock_auto_processor_class, mock_settings):
+        """
+        Test that auto mode handles generic Exception correctly
+        """
+        # Setup mock arguments with --auto flag
+        mock_args = MagicMock()
+        mock_args.auto = True
+        mock_args.config = None
+        mock_args.verbose = False
+        mock_parse_args.return_value = mock_args
+
+        # Setup mock AutoProcessor to raise generic Exception
+        mock_auto_processor_instance = MagicMock()
+        mock_auto_processor_class.return_value = mock_auto_processor_instance
+        mock_auto_processor_instance.process_messages.side_effect = Exception("Unexpected error")
+
+        # Import and run main function
+        import main
+        exit_code = main.main()
+
+        # Verify exit code is 1 (error)
+        assert exit_code == 1
 
 
 class TestMainManualModeBackwardCompatibility:
