@@ -98,6 +98,13 @@ def parse_arguments() -> argparse.Namespace:
         help='处理模式：专职从数据库获取待处理消息，执行下载和上传'
     )
 
+    parser.add_argument(
+        '--source',
+        choices=['feishu', 'dingtalk'],
+        default='feishu',
+        help='消息来源：feishu（飞书）或 dingtalk（钉钉），默认：feishu'
+    )
+
     return parser.parse_args()
 
 def main() -> int:
@@ -129,13 +136,13 @@ def main() -> int:
 
         # 接收模式：专职接收飞书消息
         if args.receive_messages:
-            logger.info("接收模式：开始接收飞书消息...")
+            logger.info(f"接收模式：开始接收{args.source}消息...")
 
-            with MessageReceiver(settings) as receiver:
+            with MessageReceiver(settings, source=args.source) as receiver:
                 result = receiver.receive_messages()
 
                 logger.info("=" * 60)
-                logger.info("消息接收完成！")
+                logger.info(f"{args.source.upper()}消息接收完成！")
                 logger.info(f"总计接收: {result.total_messages} 条消息")
                 logger.info(f"新增消息: {result.new_messages} 条")
                 logger.info(f"重复消息: {result.duplicate_messages} 条")
