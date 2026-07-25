@@ -112,6 +112,14 @@ class Settings:
         # 验证飞书配置（用于自动化模式）
         self._validate_feishu_config()
 
+        # 验证钉钉配置（用于自动化模式）
+        self._validate_dingtalk_config()
+
+        # 验证提取码格式（应该是4位数字）
+        if self.message_default_extraction_code:
+            if not re.match(r'^\d{4}$', self.message_default_extraction_code):
+                raise ConfigError(f"Invalid MESSAGE_DEFAULT_EXTRACTION_CODE format: {self.message_default_extraction_code}. Expected 4 digits.")
+
     def _validate_feishu_config(self):
         """验证飞书配置的完整性（用于自动化模式）"""
         if self.feishu_app_id and not self.feishu_app_secret:
@@ -121,9 +129,12 @@ class Settings:
         if self.feishu_chat_id and not (self.feishu_app_id and self.feishu_app_secret):
             raise ConfigError("FEISHU_CHAT_ID provided but FEISHU_APP_ID or FEISHU_APP_SECRET missing")
 
-        # 验证钉钉配置
+    def _validate_dingtalk_config(self):
+        """验证钉钉配置的完整性（用于自动化模式）"""
         if self.dingtalk_app_key and not self.dingtalk_app_secret:
             raise ConfigError("DINGTALK_APP_SECRET is required when DINGTALK_APP_KEY is set")
+        if self.dingtalk_app_secret and not self.dingtalk_app_key:
+            raise ConfigError("DINGTALK_APP_KEY is required when DINGTALK_APP_SECRET is set")
         if self.dingtalk_app_key and not self.dingtalk_chat_id:
             raise ConfigError("DINGTALK_CHAT_ID is required when DINGTALK_APP_KEY is set")
 
@@ -131,11 +142,6 @@ class Settings:
         if self.dingtalk_webhook:
             if not self._is_valid_url(self.dingtalk_webhook):
                 raise ConfigError(f"Invalid DINGTALK_WEBHOOK URL format: {self.dingtalk_webhook}")
-
-        # 验证提取码格式（应该是4位数字）
-        if self.message_default_extraction_code:
-            if not re.match(r'^\d{4}$', self.message_default_extraction_code):
-                raise ConfigError(f"Invalid MESSAGE_DEFAULT_EXTRACTION_CODE format: {self.message_default_extraction_code}. Expected 4 digits.")
 
     def _is_valid_url(self, url: str) -> bool:
         """验证URL格式的有效性"""
