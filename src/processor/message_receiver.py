@@ -30,18 +30,26 @@ class ReceiveResult:
 class MessageReceiver:
     """飞书消息接收器 - 专职接收和解析飞书消息"""
 
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(self, settings: Optional[Settings] = None, source: str = 'feishu'):
         """
         Initialize MessageReceiver with required dependencies
 
         Args:
             settings: Configuration object, defaults to new Settings instance
+            source: 消息来源 'feishu' 或 'dingtalk'
         """
+        self.source = source
         self.settings = settings or Settings()
         self.logger = logger
 
+        # 根据来源选择客户端
+        if source == 'dingtalk':
+            from src.feishu.dingtalk_client import DingtalkMessageClient
+            self.client = DingtalkMessageClient(self.settings)
+        else:
+            self.client = FeishuMessageClient(self.settings)
+
         # Initialize components
-        self.feishu_client = FeishuMessageClient(self.settings)
         self.message_parser = MessageParser()
         self.db_repo = DatabaseRepository(
             host=self.settings.db_host,
@@ -52,7 +60,7 @@ class MessageReceiver:
         )
         self.dingtalk_notifier = DingtalkNotifier(self.settings)
 
-        self.logger.info("MessageReceiver initialized successfully")
+        self.logger.info(f"MessageReceiver initialized successfully (source: {source})")
 
     def receive_messages(self) -> ReceiveResult:
         """
@@ -65,9 +73,9 @@ class MessageReceiver:
             start_time = datetime.now()
             self.logger.info("Starting message receiving process")
 
-            # 从飞书获取消息
-            messages = self.feishu_client.get_messages()
-            self.logger.info(f"Retrieved {len(messages)} messages from Feishu")
+            # 从指定来源获取消息
+            messages = self.client.get_messages()
+            self.logger.info(f"Retrieved {len(messages)} messages from {self.source}")
 
             results = {
                 'new_messages': [],
@@ -134,7 +142,7 @@ class MessageReceiver:
                         share_link=parse_result.share_link,
                         folder_name=parse_result.folder_name,
                         extraction_code=parse_result.code,
-                        source='feishu',
+                        source=parse_result.source,  # 新增：消息来源
                         process_status="pending"  # 待处理状态
                     )
                     message_id = self.db_repo.insert_message_log(message_log)
@@ -207,10 +215,11 @@ class MessageReceiver:
         try:
             # 构建通知内容（添加钉钉机器人关键词"海外研报"）
             content_lines = [
-                "## 📢 海外研报：飞书消息接收报告",
+                f"## 📢 海外研报：{self.source.upper()}消息接收报告",
                 "",
                 "### 接收结果摘要",
                 "",
+                f"- **消息来源**: {self.source.upper()}",
                 f"- **总计接收**: {result.total_messages} 条消息",
                 f"- **新增消息**: {result.new_messages} 条",
                 f"- **过滤消息**: {result.duplicate_messages + len(result.details[0].get('filtered_messages', []))} 条 (重复/无法解析)",
