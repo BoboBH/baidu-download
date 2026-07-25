@@ -110,7 +110,7 @@ class AutoProcessor:
                         continue
 
                     # Input validation - ensure parse_result has required attributes
-                    if not hasattr(parse_result, 'folder_name') or not hasattr(parse_result, 'share_link') or not hasattr(parse_result, 'code'):
+                    if not hasattr(parse_result, 'folder_name') or not hasattr(parse_result, 'share_link') or not hasattr(parse_result, 'extraction_code'):
                         self.logger.warning(f"Invalid parse result structure for message: {content[:50]}...")
                         continue
 
