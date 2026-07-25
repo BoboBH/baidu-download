@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS message_process_log (
     folder_name VARCHAR(255) COMMENT '提取的目录名',
     extraction_code VARCHAR(20) COMMENT '提取码（从folder_name提取）',
     source ENUM('feishu', 'dingtalk') DEFAULT 'feishu' COMMENT '消息来源（飞书/钉钉）',
-    process_status ENUM('pending', 'processing', 'success', 'failed', 'critical_error')
+    status ENUM('pending', 'processing', 'success', 'failed', 'critical_error')
         DEFAULT 'pending' COMMENT '处理状态',
     error_message TEXT COMMENT '错误信息',
     execution_summary_id INT COMMENT '关联执行摘要ID',
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS message_process_log (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
     INDEX idx_message_hash (message_hash),
     INDEX idx_source (source),
-    INDEX idx_status (process_status),
+    INDEX idx_status (status),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT='消息处理记录表（支持飞书和钉钉）';
