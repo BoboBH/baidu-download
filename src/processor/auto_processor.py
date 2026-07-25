@@ -133,7 +133,7 @@ class AutoProcessor:
                         original_message=content,
                         share_link=parse_result.share_link,
                         folder_name=parse_result.folder_name,
-                        extraction_code=parse_result.code,
+                        extraction_code=parse_result.extraction_code,
                         source='feishu',
                         process_status="pending"
                     )
@@ -147,7 +147,7 @@ class AutoProcessor:
                     process_start_time = datetime.now()
                     summary = self.file_processor.process_files(
                         parse_result.share_link,
-                        parse_result.code,
+                        parse_result.extraction_code,
                         parse_result.folder_name
                     )
                     processing_time = int((datetime.now() - process_start_time).total_seconds() * 1000)
