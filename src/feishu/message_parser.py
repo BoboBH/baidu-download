@@ -11,12 +11,24 @@ logger = get_logger(__name__)
 @dataclass
 class ParseResult:
     """消息解析结果"""
-    folder_name: str
+    source: str  # 消息来源 'feishu' 或 'dingtalk'
     share_link: str
-    code: str
+    folder_name: str
+    extraction_code: str
+    raw_content: str
 
 class MessageParser:
     """飞书消息解析器"""
+
+    # 飞书消息格式：260723：https://pan.baidu.com/s/1URIJc3aUvO8VHJulEW3DWg
+    FEISHU_PATTERN = re.compile(
+        r'(\d{6})[:：]\s*(https://pan\.baidu\.com/s/[A-Za-z0-9_-]+)'
+    )
+
+    # 钉钉消息格式：260723：https://pan.baidu.com/s/1URIJc3aUvO8VHJulEW3DWg
+    DINGTALK_PATTERN = re.compile(
+        r'(\d{6})\s*[：:]\s*(https://pan\.baidu\.com/s/[a-zA-Z0-9_-]+)'
+    )
 
     def __init__(self):
         """初始化解析器"""
@@ -24,15 +36,57 @@ class MessageParser:
         # 正则模式：匹配 YYMMDD：https://pan.baidu.com/s/xxx（允许前面有其他文字）
         self.pattern = r'(\d{6})[:：]\s*(https://pan\.baidu\.com/s/[A-Za-z0-9_-]+)'
 
-    def parse_message(self, content: str) -> Optional[ParseResult]:
+    def _match_dingtalk_format(self, content: str) -> Optional[re.Match]:
         """
-        解析飞书消息内容
+        匹配钉钉消息格式
 
         Args:
             content: 消息内容
 
         Returns:
-            ParseResult对象，解析失败返回None
+            匹配对象，如果不匹配则返回 None
+        """
+        return self.DINGTALK_PATTERN.search(content)
+
+    def _match_feishu_format(self, content: str) -> Optional[re.Match]:
+        """
+        匹配飞书消息格式
+
+        Args:
+            content: 消息内容
+
+        Returns:
+            匹配对象，如果不匹配则返回 None
+        """
+        return self.FEISHU_PATTERN.search(content)
+
+    def _extract_folder_name(self, content: str, extraction_code: str) -> Optional[str]:
+        """
+        从消息内容中提取文件夹名
+
+        Args:
+            content: 消息内容
+            extraction_code: 提取码
+
+        Returns:
+            文件夹名，如果无法提取则返回 None
+        """
+        # 简单实现：直接使用提取码作为文件夹名
+        return extraction_code
+
+    def parse_message(self, content: str) -> Optional[ParseResult]:
+        """
+        解析消息内容，统一识别流程
+
+        优先级：
+        1. 钉钉格式（新增）
+        2. 飞书格式（现有）
+
+        Args:
+            content: 消息内容
+
+        Returns:
+            ParseResult 对象，如果无法解析则返回 None
         """
         if not content:
             logger.warning("Empty message content")
@@ -52,23 +106,45 @@ class MessageParser:
             # 不是JSON格式，直接使用原始内容
             logger.debug("Using raw message content (not JSON)")
 
-        # 匹配正则表达式（使用search而不是match，可以在字符串任意位置匹配）
-        match = re.search(self.pattern, content)
+        # 1. 尝试钉钉格式
+        dingtalk_match = self._match_dingtalk_format(content)
+        if dingtalk_match:
+            extraction_code = dingtalk_match.group(1)  # 260723
+            share_link = dingtalk_match.group(2)       # https://...
+            folder_name = extraction_code  # 直接使用提取码作为文件夹名
 
-        if match:
-            folder_name = match.group(1)  # 260723
-            share_link = match.group(2)   # https://pan.baidu.com/s/xxx
-            code = self.settings.message_default_extraction_code  # 0409
-
-            logger.info(f"Message parsed successfully: {folder_name}")
+            logger.info(f"DingTalk message parsed successfully: {folder_name}")
             return ParseResult(
-                folder_name=folder_name,
+                source='dingtalk',
                 share_link=share_link,
-                code=code
+                folder_name=folder_name,
+                extraction_code=extraction_code,
+                raw_content=content
             )
-        else:
-            logger.debug(f"Failed to parse message: {content[:50]}...")
-            return None
+
+        # 2. 尝试飞书格式（保留原有逻辑）
+        feishu_match = self._match_feishu_format(content)
+        if feishu_match:
+            extraction_code = feishu_match.group(1)
+            share_link = feishu_match.group(2)
+
+            # 从消息中提取文件夹名
+            folder_name = self._extract_folder_name(content, extraction_code)
+            if not folder_name:
+                return None
+
+            logger.info(f"Feishu message parsed successfully: {folder_name}")
+            return ParseResult(
+                source='feishu',
+                share_link=share_link,
+                folder_name=folder_name,
+                extraction_code=extraction_code,
+                raw_content=content
+            )
+
+        # 3. 无法识别
+        logger.debug(f"Failed to parse message: {content[:50]}...")
+        return None
 
     def calculate_message_hash(self, content: str) -> str:
         """
