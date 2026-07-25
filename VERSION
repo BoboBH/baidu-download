@@ -1,11 +1,25 @@
 MAJOR_VERSION=1
-MINOR_VERSION=1
-PATCH_VERSION=5
-VERSION_STRING="v1.1.5"
-BUILD_DATE="2026-07-18"
-BUILD_TIME="23:45"
+MINOR_VERSION=2
+PATCH_VERSION=0
+VERSION_STRING="v1.2.0"
+BUILD_DATE="2026-07-24"
+BUILD_TIME="16:15"
 
 # 版本历史:
+# v1.2.0 (2026-07-24 16:15) - 分离式架构重大升级版本
+#   - 🎉 重大架构改进：实现消息接收与文件处理的分离式架构
+#   - ✨ 新增--receive-messages模式：专职接收飞书消息，解析并记录到数据库
+#   - ✨ 新增--process-pending模式：专职从数据库获取待处理消息，执行下载和上传
+#   - 📊 消息状态管理：pending, processing, success, failed, critical_error
+#   - 🔄 消息去重机制：使用MD5哈希自动检测和忽略重复消息
+#   - 📬 双层次钉钉通知：单个消息完成通知 + 总体处理报告
+#   - 🚀 性能优化：消息接收毫秒级完成，文件处理独立执行
+#   - 🛡️ 错误隔离：接收失败不影响处理，处理失败不影响接收
+#   - 📝 简化通知逻辑：只显示关键统计，过滤消息不算失败
+#   - 🔧 修复ExecutionSummary参数名大小写不匹配bug
+#   - ✅ 保留所有原有功能：--auto模式、--link/--code/--folder手动模式
+#   - 🏗️ 生产环境就绪：支持灵活的定时部署策略
+#
 # v1.1.5 (2026-07-18 23:45) - 文件名可读性优化版本
 #   - 🎉 重大改进：优化文件名处理策略，保持可读性
 #   - ✨ 优先保留原始文件名，只在超过200字符时才截断

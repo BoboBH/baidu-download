@@ -25,7 +25,7 @@ REM 配置变量
 set "PROJECT_NAME=baidu-download"
 set "SPEC_FILE=baidu_download.spec"
 set "BUILD_DIR=build"
-set "DIST_DIR=dist"
+set "DIST_DIR=release\dist"
 set "PYTHON_EXE=python"
 
 REM 颜色设置 (Windows 10+)

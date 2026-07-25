@@ -1,5 +1,6 @@
 import re
 import hashlib
+import json as json_module
 from typing import Optional
 from dataclasses import dataclass
 from src.config.settings import Settings
@@ -20,8 +21,8 @@ class MessageParser:
     def __init__(self):
         """初始化解析器"""
         self.settings = Settings()
-        # 正则模式：匹配 YYMMDD：https://pan.baidu.com/s/xxx
-        self.pattern = r'^(\d{6})[:：]\s*(https://pan\.baidu\.com/s/[A-Za-z0-9_-]+)'
+        # 正则模式：匹配 YYMMDD：https://pan.baidu.com/s/xxx（允许前面有其他文字）
+        self.pattern = r'(\d{6})[:：]\s*(https://pan\.baidu\.com/s/[A-Za-z0-9_-]+)'
 
     def parse_message(self, content: str) -> Optional[ParseResult]:
         """
@@ -40,8 +41,19 @@ class MessageParser:
         # 去除首尾空格
         content = content.strip()
 
-        # 匹配正则表达式
-        match = re.match(self.pattern, content)
+        # 解析JSON格式的消息内容
+        try:
+            # 尝试解析JSON字符串 {"text":"内容"}
+            parsed_content = json_module.loads(content)
+            if isinstance(parsed_content, dict) and 'text' in parsed_content:
+                content = parsed_content['text']
+                logger.debug(f"Parsed JSON message content: {content}")
+        except (json_module.JSONDecodeError, TypeError):
+            # 不是JSON格式，直接使用原始内容
+            logger.debug("Using raw message content (not JSON)")
+
+        # 匹配正则表达式（使用search而不是match，可以在字符串任意位置匹配）
+        match = re.search(self.pattern, content)
 
         if match:
             folder_name = match.group(1)  # 260723
@@ -55,7 +67,7 @@ class MessageParser:
                 code=code
             )
         else:
-            logger.warning(f"Failed to parse message: {content[:50]}...")
+            logger.debug(f"Failed to parse message: {content[:50]}...")
             return None
 
     def calculate_message_hash(self, content: str) -> str:

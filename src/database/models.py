@@ -35,20 +35,23 @@ class ExecutionSummary:
     id: Optional[int] = None
     created_at: Optional[datetime] = None
 
-def create_tables() -> str:
+def create_tables(database_name: str = 'baidu_download') -> str:
     """
     生成创建表的SQL语句
+
+    Args:
+        database_name: 数据库名称，默认为 'baidu_download'
 
     Returns:
         SQL创建脚本
     """
-    return """
+    return f"""
 -- 创建数据库
-CREATE DATABASE IF NOT EXISTS baidu_download
+CREATE DATABASE IF NOT EXISTS {database_name}
 DEFAULT CHARACTER SET utf8mb4
 DEFAULT COLLATE utf8mb4_unicode_ci;
 
-USE baidu_download;
+USE {database_name};
 
 -- 创建文件传输记录表
 CREATE TABLE IF NOT EXISTS file_transfer_log (

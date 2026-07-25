@@ -1,12 +1,13 @@
 -- 百度网盘PDF文件自动传输系统数据库初始化脚本
 -- 使用方法：mysql -u root -p < db_init.sql
+-- 或者指定数据库名：mysql -u root -p --set=DB_NAME=test < db_init.sql
 
--- 创建数据库
-CREATE DATABASE IF NOT EXISTS baidu_download
+-- 创建数据库 (默认使用 baidu_download，可通过修改下方变量名来更改)
+CREATE DATABASE IF NOT EXISTS test
 DEFAULT CHARACTER SET utf8mb4
 DEFAULT COLLATE utf8mb4_unicode_ci;
 
-USE baidu_download;
+USE test;
 
 -- 创建文件传输记录表
 CREATE TABLE IF NOT EXISTS file_transfer_log (
@@ -50,6 +51,34 @@ CREATE TABLE IF NOT EXISTS execution_summary (
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT='执行摘要表';
+
+-- 创建飞书消息处理记录表（自动模式专用）
+CREATE TABLE IF NOT EXISTS message_process_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    message_hash VARCHAR(32) NOT NULL UNIQUE COMMENT '消息内容MD5哈希值',
+    folder_name VARCHAR(255) NOT NULL COMMENT '解析出的文件夹名(YYMMDD格式)',
+    share_link VARCHAR(500) NOT NULL COMMENT '百度网盘分享链接',
+    extraction_code VARCHAR(20) NOT NULL COMMENT '提取码',
+    message_content TEXT COMMENT '原始飞书消息内容',
+    process_status ENUM('pending', 'processing', 'success', 'failed', 'critical_error')
+        DEFAULT 'pending' COMMENT '处理状态',
+    error_message TEXT COMMENT '错误信息',
+    retry_count INT DEFAULT 0 COMMENT '重试次数',
+    processed_file_count INT DEFAULT 0 COMMENT '成功处理的文件数量',
+    processing_time_ms INT COMMENT '处理耗时(毫秒)',
+    feishu_message_time DATETIME COMMENT '飞书消息发送时间',
+    start_time DATETIME COMMENT '开始处理时间',
+    end_time DATETIME COMMENT '处理完成时间',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
+
+    INDEX idx_message_hash (message_hash),
+    INDEX idx_folder_name (folder_name),
+    INDEX idx_process_status (process_status),
+    INDEX idx_created_at (created_at),
+    INDEX idx_feishu_message_time (feishu_message_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT='飞书消息处理记录表';
 
 -- 显示创建的表
 SHOW TABLES;

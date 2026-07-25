@@ -90,14 +90,14 @@ class FileProcessor:
             if not pdf_files:
                 logger.warning("No PDF files found")
                 return ExecutionSummary(
-                    SHARE_LINK=share_link,
-                    FOLDER_NAME=folder_name,
-                    TOTAL_FILES=0,
-                    SUCCESS_COUNT=0,
-                    FAILED_COUNT=0,
-                    SKIPPED_COUNT=0,
-                    START_TIME=start_time,
-                    END_TIME=datetime.now()
+                    share_link=share_link,
+                    folder_name=folder_name,
+                    total_files=0,
+                    success_count=0,
+                    failed_count=0,
+                    skipped_count=0,
+                    start_time=start_time,
+                    end_time=datetime.now()
                 )
 
             logger.info(f"Found {len(pdf_files)} PDF files")
@@ -127,15 +127,15 @@ class FileProcessor:
             # 6. 创建执行摘要
             end_time = datetime.now()
             summary = ExecutionSummary(
-                SHARE_LINK=share_link,
-                FOLDER_NAME=folder_name,
-                TOTAL_FILES=len(pdf_files),
-                SUCCESS_COUNT=success_count,
-                FAILED_COUNT=failed_count,
-                SKIPPED_COUNT=skipped_count,
-                START_TIME=start_time,
-                END_TIME=end_time,
-                TOTAL_SIZE=total_size
+                share_link=share_link,
+                folder_name=folder_name,
+                total_files=len(pdf_files),
+                success_count=success_count,
+                failed_count=failed_count,
+                skipped_count=skipped_count,
+                start_time=start_time,
+                end_time=end_time,
+                total_size=total_size
             )
 
             # 7. 保存执行摘要
@@ -300,14 +300,14 @@ class FileProcessor:
 
         # 插入文件日志（使用原始文件名）
         file_log = FileTransferLog(
-            SHARE_LINK=share_link,
-            EXTRACTION_CODE=code,
-            FOLDER_NAME=folder_name,
-            FILE_NAME=original_file_name,  # 使用原始文件名
-            FILE_PATH=remote_path,
-            TRANSFER_STATUS='pending',
-            START_TIME=datetime.now(),
-            FILE_SIZE=file_info['size']
+            share_link=share_link,
+            extraction_code=code,
+            folder_name=folder_name,
+            file_name=original_file_name,  # 使用原始文件名
+            file_path=remote_path,
+            transfer_status='pending',
+            start_time=datetime.now(),
+            file_size=file_info['size']
         )
 
         log_id = self.db_repo.insert_file_log(file_log)

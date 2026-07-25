@@ -5,10 +5,10 @@
 
 import sys
 import argparse
-from typing import Optional
-from pathlib import Path
 from src.processor.file_processor import FileProcessor
 from src.processor.auto_processor import AutoProcessor
+from src.processor.message_receiver import MessageReceiver
+from src.processor.file_transfer_processor import FileTransferProcessor
 from src.config.settings import ConfigError, Settings
 from src.utils.logger import get_logger
 
@@ -25,9 +25,23 @@ def parse_arguments() -> argparse.Namespace:
     python main.py --link "https://pan.baidu.com/s/xxx" --code "1234" --folder "test"
     python main.py -l "分享链接" -c "提取码" -f "目录名" --verbose
 
-  自动模式:
+  自动模式（一站式）:
     python main.py --auto
     python main.py --auto --config "/path/to/config.env" --verbose
+
+  分离模式 - 接收消息:
+    python main.py --receive-messages
+    python main.py --receive-messages --verbose
+
+  分离模式 - 处理待处理消息:
+    python main.py --process-pending
+    python main.py --process-pending --verbose
+
+  分离模式 - 组合使用（推荐）:
+    # 步骤1: 接收飞书消息
+    python main.py --receive-messages
+    # 步骤2: 处理待处理消息
+    python main.py --process-pending
         '''
     )
 
@@ -72,6 +86,18 @@ def parse_arguments() -> argparse.Namespace:
         help='自动模式：从飞书获取消息并自动处理（不需要手动指定链接、提取码和目录名）'
     )
 
+    parser.add_argument(
+        '--receive-messages',
+        action='store_true',
+        help='接收模式：专职收取飞书消息，解析并记录到数据库（状态为待处理）'
+    )
+
+    parser.add_argument(
+        '--process-pending',
+        action='store_true',
+        help='处理模式：专职从数据库获取待处理消息，执行下载和上传'
+    )
+
     return parser.parse_args()
 
 def main() -> int:
@@ -82,6 +108,9 @@ def main() -> int:
 
         # 设置日志级别
         if args.verbose:
+            logger.setLevel('DEBUG')
+            for handler in logger.handlers:
+                handler.setLevel('DEBUG')
             logger.info("Verbose mode enabled")
 
         logger.info("=" * 60)
@@ -98,7 +127,48 @@ def main() -> int:
 
         logger.info("配置验证通过")
 
-        # 自动模式处理
+        # 接收模式：专职接收飞书消息
+        if args.receive_messages:
+            logger.info("接收模式：开始接收飞书消息...")
+
+            with MessageReceiver(settings) as receiver:
+                result = receiver.receive_messages()
+
+                logger.info("=" * 60)
+                logger.info("消息接收完成！")
+                logger.info(f"总计接收: {result.total_messages} 条消息")
+                logger.info(f"新增消息: {result.new_messages} 条")
+                logger.info(f"重复消息: {result.duplicate_messages} 条")
+                # 计算过滤消息数量（重复 + 无法解析）
+                filtered_count = result.duplicate_messages + len(result.details[0].get('filtered_messages', []))
+                logger.info(f"过滤消息: {filtered_count} 条 (重复/无法解析)")
+                logger.info(f"处理耗时: {result.processing_time_ms / 1000:.2f} 秒")
+                logger.info("=" * 60)
+
+                return 0 if result.failed_messages == 0 else 1
+
+        # 处理模式：专职处理待处理消息
+        if args.process_pending:
+            logger.info("处理模式：开始处理待处理消息...")
+
+            with FileTransferProcessor(settings) as processor:
+                result = processor.process_pending_messages()
+
+                logger.info("=" * 60)
+                logger.info("文件处理完成！")
+                logger.info(f"处理消息数: {result.total_messages} 条")
+                logger.info(f"成功消息: {result.success_messages} 条")
+                logger.info(f"失败消息: {result.failed_messages} 条")
+                logger.info(f"总文件数: {result.total_files} 个")
+                logger.info(f"成功文件: {result.total_success_files} 个")
+                logger.info(f"失败文件: {result.total_failed_files} 个")
+                logger.info(f"总大小: {result.total_size_mb:.2f} MB")
+                logger.info(f"处理耗时: {result.processing_time_ms / 1000:.2f} 秒")
+                logger.info("=" * 60)
+
+                return 0 if result.failed_messages == 0 else 1
+
+        # 自动模式处理（保留原有的一站式功能）
         if args.auto:
             logger.info("自动模式：开始自动处理飞书消息...")
 

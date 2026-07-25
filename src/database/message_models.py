@@ -9,10 +9,11 @@ class MessageProcessLog:
     original_message: Optional[str] = None
     share_link: Optional[str] = None
     folder_name: Optional[str] = None
-    status: str = 'pending'  # pending, processing, success, failed, critical_error
+    extraction_code: Optional[str] = None
+    process_status: str = 'pending'  # pending, processing, success, failed, critical_error
     error_message: Optional[str] = None
     execution_summary_id: Optional[int] = None
-    processing_time: Optional[int] = None  # 毫秒
+    processing_time_ms: Optional[int] = None  # 毫秒
     id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

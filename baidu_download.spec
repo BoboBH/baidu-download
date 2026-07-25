@@ -22,6 +22,12 @@ from pathlib import Path
 # 项目根目录
 base_path = Path.cwd()
 
+# 设置输出目录到 release/dist
+dist_path = base_path / 'release' / 'dist'
+work_path = base_path / 'build'
+if not dist_path.exists():
+    dist_path.mkdir(parents=True, exist_ok=True)
+
 # ============================================================================
 # 数据文件配置 - 包含所有运行时需要的非Python文件
 # ============================================================================

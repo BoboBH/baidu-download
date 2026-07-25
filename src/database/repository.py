@@ -53,7 +53,7 @@ class DatabaseRepository:
 
             # 创建表
             from src.database.models import create_tables
-            sql_commands = create_tables().split(';')
+            sql_commands = create_tables(self.database).split(';')
             for command in sql_commands:
                 command = command.strip()
                 if command:
@@ -90,18 +90,18 @@ class DatabaseRepository:
             """
 
             cursor.execute(sql, (
-                log.SHARE_LINK,
-                log.EXTRACTION_CODE,
-                log.FOLDER_NAME,
-                log.FILE_NAME,
-                log.FILE_PATH,
-                log.TRANSFER_STATUS,
-                log.START_TIME or datetime.now(),
-                log.FILE_SIZE
+                log.share_link,
+                log.extraction_code,
+                log.folder_name,
+                log.file_name,
+                log.file_path,
+                log.transfer_status,
+                log.start_time or datetime.now(),
+                log.file_size
             ))
-            
+
             self.connection.commit()
-            logger.debug(f"Inserted file log: {log.FILE_NAME}")
+            logger.debug(f"Inserted file log: {log.file_name}")
             return cursor.lastrowid
             
         except Exception as e:
@@ -176,19 +176,19 @@ class DatabaseRepository:
             """
 
             cursor.execute(sql, (
-                summary.SHARE_LINK,
-                summary.FOLDER_NAME,
-                summary.TOTAL_FILES,
-                summary.SUCCESS_COUNT,
-                summary.FAILED_COUNT,
-                summary.SKIPPED_COUNT,
-                summary.START_TIME,
-                summary.END_TIME,
-                summary.TOTAL_SIZE
+                summary.share_link,
+                summary.folder_name,
+                summary.total_files,
+                summary.success_count,
+                summary.failed_count,
+                summary.skipped_count,
+                summary.start_time,
+                summary.end_time,
+                summary.total_size
             ))
-            
+
             self.connection.commit()
-            logger.info(f"Inserted execution summary for {summary.FOLDER_NAME}")
+            logger.info(f"Inserted execution summary for {summary.folder_name}")
             return cursor.lastrowid
             
         except Exception as e:
@@ -223,13 +223,13 @@ class DatabaseRepository:
             logs = []
             for row in results:
                 logs.append(FileTransferLog(
-                    ID=row['id'],
-                    SHARE_LINK=row['share_link'],
-                    EXTRACTION_CODE=row['extraction_code'],
-                    FOLDER_NAME=row['folder_name'],
-                    FILE_NAME=row['file_name'],
-                    FILE_PATH=row['file_path'],
-                    TRANSFER_STATUS=row['transfer_status'],
+                    id=row['id'],
+                    share_link=row['share_link'],
+                    extraction_code=row['extraction_code'],
+                    folder_name=row['folder_name'],
+                    file_name=row['file_name'],
+                    file_path=row['file_path'],
+                    transfer_status=row['transfer_status'],
                     ERROR_MESSAGE=row['error_message'],
                     START_TIME=row['start_time'],
                     DOWNLOAD_TIME=row['download_time'],
@@ -274,17 +274,17 @@ class DatabaseRepository:
 
             if row:
                 return FileTransferLog(
-                    ID=row['id'],
-                    SHARE_LINK=row['share_link'],
-                    EXTRACTION_CODE=row['extraction_code'],
-                    FOLDER_NAME=row['folder_name'],
-                    FILE_NAME=row['file_name'],
-                    FILE_PATH=row['file_path'],
-                    TRANSFER_STATUS=row['transfer_status'],
-                    ERROR_MESSAGE=row['error_message'],
-                    START_TIME=row['start_time'],
-                    DOWNLOAD_TIME=row['download_time'],
-                    UPLOAD_TIME=row['upload_time'],
+                    id=row['id'],
+                    share_link=row['share_link'],
+                    extraction_code=row['extraction_code'],
+                    folder_name=row['folder_name'],
+                    file_name=row['file_name'],
+                    file_path=row['file_path'],
+                    transfer_status=row['transfer_status'],
+                    error_message=row['error_message'],
+                    start_time=row['start_time'],
+                    download_time=row['download_time'],
+                    upload_time=row['upload_time'],
                     FILE_SIZE=row['file_size'],
                     CREATED_AT=row['created_at'],
                     UPDATED_AT=row['updated_at']
@@ -313,9 +313,9 @@ class DatabaseRepository:
         try:
             sql = """
             INSERT INTO message_process_log
-            (message_hash, original_message, share_link, folder_name, status,
-             error_message, execution_summary_id, processing_time)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (message_hash, original_message, share_link, folder_name, extraction_code, process_status,
+             error_message, execution_summary_id, processing_time_ms)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
 
             cursor.execute(sql, (
@@ -323,10 +323,11 @@ class DatabaseRepository:
                 log.original_message,
                 log.share_link,
                 log.folder_name,
-                log.status,
+                log.extraction_code,
+                log.process_status,
                 log.error_message,
                 log.execution_summary_id,
-                log.processing_time
+                log.processing_time_ms
             ))
 
             self.connection.commit()
@@ -370,10 +371,11 @@ class DatabaseRepository:
                     original_message=row['original_message'],
                     share_link=row['share_link'],
                     folder_name=row['folder_name'],
-                    status=row['status'],
+                    extraction_code=row.get('extraction_code'),
+                    process_status=row['process_status'],
                     error_message=row['error_message'],
-                    execution_summary_id=row['execution_summary_id'],
-                    processing_time=row['processing_time'],
+                    execution_summary_id=row.get('execution_summary_id'),
+                    processing_time_ms=row.get('processing_time_ms'),
                     created_at=row['created_at'],
                     updated_at=row['updated_at']
                 )
@@ -389,7 +391,7 @@ class DatabaseRepository:
     def update_message_status(self, message_hash: str, status: str,
                              error_message: Optional[str] = None,
                              execution_summary_id: Optional[int] = None,
-                             processing_time: Optional[int] = None):
+                             processing_time_ms: Optional[int] = None):
         """
         更新消息处理状态
 
@@ -405,10 +407,10 @@ class DatabaseRepository:
         try:
             sql = """
             UPDATE message_process_log
-            SET status = %s,
+            SET process_status = %s,
                 error_message = %s,
                 execution_summary_id = %s,
-                processing_time = %s
+                processing_time_ms = %s
             WHERE message_hash = %s
             """
 
@@ -416,7 +418,7 @@ class DatabaseRepository:
                 status,
                 error_message,
                 execution_summary_id,
-                processing_time,
+                processing_time_ms,
                 message_hash
             ))
 
@@ -445,7 +447,7 @@ class DatabaseRepository:
         try:
             sql = """
             SELECT message_hash FROM message_process_log
-            WHERE status = 'critical_error'
+            WHERE process_status = 'critical_error'
             AND created_at >= DATE_SUB(NOW(), INTERVAL %s HOUR)
             """
 
