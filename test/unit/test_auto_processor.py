@@ -87,7 +87,7 @@ class TestAutoProcessor:
         mock_parse_result = Mock()
         mock_parse_result.folder_name = "260723"
         mock_parse_result.share_link = "https://pan.baidu.com/s/abc123"
-        mock_parse_result.code = "0409"
+        mock_parse_result.extraction_code = "0409"
         auto_processor.message_parser.parse_message = Mock(side_effect=[mock_parse_result, None])
 
         # Mock duplicate check - no duplicates
@@ -112,7 +112,7 @@ class TestAutoProcessor:
         mock_parse_result = Mock()
         mock_parse_result.folder_name = "260723"
         mock_parse_result.share_link = "https://pan.baidu.com/s/abc123"
-        mock_parse_result.code = "0409"
+        mock_parse_result.extraction_code = "0409"
         auto_processor.message_parser.parse_message = Mock(return_value=mock_parse_result)
 
         # Mock duplicate check - message is duplicate
@@ -137,7 +137,7 @@ class TestAutoProcessor:
         mock_parse_result = Mock()
         mock_parse_result.folder_name = "260723"
         mock_parse_result.share_link = "https://pan.baidu.com/s/abc123"
-        mock_parse_result.code = "0409"
+        mock_parse_result.extraction_code = "0409"
         auto_processor.message_parser.parse_message = Mock(return_value=mock_parse_result)
         auto_processor.message_parser.calculate_message_hash = Mock(return_value="hash123")
         auto_processor._is_duplicate_message = Mock(return_value=False)
@@ -168,7 +168,7 @@ class TestAutoProcessor:
         mock_parse_result = Mock()
         mock_parse_result.folder_name = "260723"
         mock_parse_result.share_link = "https://pan.baidu.com/s/abc123"
-        mock_parse_result.code = "0409"
+        mock_parse_result.extraction_code = "0409"
         auto_processor.message_parser.parse_message = Mock(return_value=mock_parse_result)
         auto_processor.message_parser.calculate_message_hash = Mock(return_value="hash123")
         auto_processor._is_duplicate_message = Mock(return_value=False)
@@ -249,7 +249,7 @@ class TestAutoProcessor:
         mock_parse_result = Mock()
         mock_parse_result.folder_name = "260723"
         mock_parse_result.share_link = "https://pan.baidu.com/s/abc123"
-        mock_parse_result.code = "0409"
+        mock_parse_result.extraction_code = "0409"
         auto_processor.message_parser.parse_message = Mock(return_value=mock_parse_result)
         auto_processor.message_parser.calculate_message_hash = Mock(return_value="hash123")
         auto_processor._is_duplicate_message = Mock(return_value=False)

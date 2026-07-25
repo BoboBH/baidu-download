@@ -808,7 +808,7 @@ class TestAutoWorkflowIntegration:
         assert parse_result is not None
         assert parse_result.folder_name == "240724"
         assert parse_result.share_link == "https://pan.baidu.com/s/abc123"
-        assert parse_result.code == test_settings.message_default_extraction_code
+        assert parse_result.extraction_code == test_settings.message_default_extraction_code
 
         # Test hash calculation
         msg_hash = parser.calculate_message_hash(valid_content)
