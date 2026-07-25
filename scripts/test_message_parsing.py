@@ -48,7 +48,7 @@ def test_message_parsing():
                 print(f"  ✅ 解析成功:")
                 print(f"     文件夹名: {result.folder_name}")
                 print(f"     分享链接: {result.share_link}")
-                print(f"     提取码: {result.code}")
+                print(f"     提取码: {result.extraction_code}")
             else:
                 print(f"  ❌ 解析失败")
         except Exception as e:

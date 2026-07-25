@@ -66,7 +66,7 @@ def test_feishu_messages():
                         print(f"  [SUCCESS] 解析成功:")
                         print(f"     文件夹名: {result.folder_name}")
                         print(f"     分享链接: {result.share_link}")
-                        print(f"     提取码: {result.code}")
+                        print(f"     提取码: {result.extraction_code}")
                         valid_messages.append(result)
                     else:
                         print(f"  [FAIL] 解析失败: 格式不匹配")
