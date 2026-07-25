@@ -99,6 +99,7 @@ class FileTransferProcessor:
                     share_link=row['share_link'],
                     folder_name=row['folder_name'],
                     extraction_code=row.get('extraction_code'),
+                    source=row.get('source', 'feishu'),
                     process_status=row['process_status'],
                     error_message=row['error_message'],
                     execution_summary_id=row.get('execution_summary_id'),

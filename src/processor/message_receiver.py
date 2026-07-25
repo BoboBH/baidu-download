@@ -134,6 +134,7 @@ class MessageReceiver:
                         share_link=parse_result.share_link,
                         folder_name=parse_result.folder_name,
                         extraction_code=parse_result.code,
+                        source='feishu',
                         process_status="pending"  # 待处理状态
                     )
                     message_id = self.db_repo.insert_message_log(message_log)
