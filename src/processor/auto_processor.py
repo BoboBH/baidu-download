@@ -87,8 +87,18 @@ class AutoProcessor:
                 parse_result = None  # Initialize for proper error reporting
 
                 try:
-                    # Extract message content from JSON
-                    content = message.get("content", "")
+                    # Extract message content from JSON structure
+                    # Message structure: {"body": {"content": "{\"text\":\"...\"}" }}
+                    body = message.get("body", {})
+                    if isinstance(body, str):
+                        # body是字符串，直接使用
+                        content = body
+                    elif isinstance(body, dict):
+                        # body是字典，提取content字段
+                        content = body.get("content", "")
+                    else:
+                        content = ""
+
                     if not content:
                         self.logger.warning(f"Empty message content for message_id: {message.get('message_id')}")
                         continue
@@ -123,7 +133,8 @@ class AutoProcessor:
                         original_message=content,
                         share_link=parse_result.share_link,
                         folder_name=parse_result.folder_name,
-                        status="pending"
+                        extraction_code=parse_result.code,
+                        process_status="pending"
                     )
                     message_id = self.db_repo.insert_message_log(message_log)
                     self.logger.info(f"Inserted new message: {parse_result.folder_name}")
@@ -152,7 +163,7 @@ class AutoProcessor:
                         message_hash,
                         status,
                         error_message=error_message,
-                        processing_time=processing_time
+                        processing_time_ms=processing_time
                     )
 
                     results.append(ProcessResult(
@@ -209,14 +220,16 @@ class AutoProcessor:
             skipped_count = sum(1 for r in results if r.status == "skipped")
             total_count = len(results)
 
-            # Build notification content
+            # Build notification content (添加钉钉机器人关键词"海外研报")
             content_lines = [
-                "## 处理结果摘要",
+                "## 📢 海外研报：百度网盘文件处理报告",
                 "",
-                f"- 总计处理: {total_count} 条消息",
-                f"- 成功: {success_count} 条",
-                f"- 失败: {failed_count} 条",
-                f"- 跳过: {skipped_count} 条",
+                "### 处理结果摘要",
+                "",
+                f"- **总计处理**: {total_count} 条消息",
+                f"- **成功处理**: {success_count} 条",
+                f"- **处理失败**: {failed_count} 条",
+                f"- **跳过处理**: {skipped_count} 条",
             ]
 
             # Add successful processing details

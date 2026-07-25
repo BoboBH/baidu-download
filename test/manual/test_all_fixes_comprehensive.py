@@ -80,7 +80,7 @@ try:
         print("=" * 60)
 
         try:
-            sql = create_tables()
+            sql = create_tables('test')
 
             # Check that SQL uses lowercase column names
             checks = [

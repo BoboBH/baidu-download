@@ -1,0 +1,17 @@
+百度网盘PDF文件自动传输系统 v1.2.0 发布包
+=================================================
+
+文件名: baidu-download-v1.2.0-exe.zip
+文件大小: 21M
+MD5校验和: F5692A19C0DDE25A39B8312F7BF64C52
+发布时间: 2026-07-24 16:40:32
+
+包内容:
+  - baidu-download.exe (主程序 v1.2.0)
+  - BaiduPCS-Go.exe (百度网盘工具)
+  - .env.example (配置模板)
+  - baidu-cookies.txt (百度登录cookie)
+  - QUICKSTART.md (快速启动指南)
+  - README.txt (详细说明)
+  - middle/*.sql (数据库脚本)
+

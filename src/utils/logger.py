@@ -37,15 +37,15 @@ def setup_logger(name: str, log_file: str, level: str = 'INFO') -> logging.Logge
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    # 文件处理器
+    # 文件处理器 - 使用配置的日志级别
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setLevel(logging.INFO)
+    file_handler.setLevel(getattr(logging, level.upper()))
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
-    # 控制台处理器
+    # 控制台处理器 - 使用配置的日志级别
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(getattr(logging, level.upper()))
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 

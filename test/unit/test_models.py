@@ -33,9 +33,10 @@ def test_execution_summary_model():
 
 def test_create_tables_sql_generation():
     """测试表创建SQL生成"""
-    sql = create_tables()
+    sql = create_tables('test_database')
 
     assert 'CREATE DATABASE' in sql
+    assert 'test_database' in sql
     assert 'file_transfer_log' in sql
     assert 'execution_summary' in sql
     assert 'share_link' in sql
