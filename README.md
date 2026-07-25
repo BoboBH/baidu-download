@@ -60,6 +60,24 @@ baidu-download.exe -l "链接" -c "码" -f "目录" --verbose
 baidu-download.exe -l "链接" -c "码" -f "目录" --dry-run
 ```
 
+### 接收钉钉消息
+
+```bash
+# 接收钉钉消息
+python main.py --receive-messages --source dingtalk
+
+# 接收钉钉消息（详细日志）
+python main.py --receive-messages --source dingtalk --verbose
+```
+
+### 消息来源说明
+
+系统支持两种消息来源：
+- **飞书（feishu）**：默认来源，通过飞书群接收消息
+- **钉钉（dingtalk）**：新增支持，通过钉钉群接收消息
+
+消息会自动识别来源，并在数据库中通过 `source` 字段区分。
+
 ## 🛠️ 系统要求
 
 ### EXE版本 (推荐)

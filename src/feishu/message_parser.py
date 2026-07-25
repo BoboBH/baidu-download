@@ -20,9 +20,13 @@ class ParseResult:
 class MessageParser:
     """飞书消息解析器"""
 
-    # 飞书消息格式：260723：https://pan.baidu.com/s/1URIJc3aUvO8VHJulEW3DWg
+    # 飞书消息格式：多行格式
+    # 提取码 260723
+    # 链接：https://pan.baidu.com/s/1URIJc3aUvO8VHJulEW3DWg
+    # 文件夹：20250723研报
     FEISHU_PATTERN = re.compile(
-        r'(\d{6})[:：]\s*(https://pan\.baidu\.com/s/[A-Za-z0-9_-]+)'
+        r'提取码\s*(\d{6})\s*链接[:：]\s*(https://pan\.baidu\.com/s/[A-Za-z0-9_-]+)',
+        re.MULTILINE
     )
 
     # 钉钉消息格式：260723：https://pan.baidu.com/s/1URIJc3aUvO8VHJulEW3DWg
