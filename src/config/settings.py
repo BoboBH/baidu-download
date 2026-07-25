@@ -43,6 +43,9 @@ class Settings:
         self.feishu_hours_limit = self._get_int_env('FEISHU_HOURS_LIMIT', default=24)  # 默认24小时
 
         # 钉钉配置
+        self.dingtalk_app_key = os.getenv('DINGTALK_APP_KEY', '')
+        self.dingtalk_app_secret = os.getenv('DINGTALK_APP_SECRET', '')
+        self.dingtalk_chat_id = os.getenv('DINGTALK_CHAT_ID', '')
         self.dingtalk_webhook = os.getenv('DINGTALK_WEBHOOK', '')
 
         # 消息处理配置
@@ -117,6 +120,12 @@ class Settings:
             raise ConfigError("FEISHU_APP_SECRET provided but FEISHU_APP_ID missing")
         if self.feishu_chat_id and not (self.feishu_app_id and self.feishu_app_secret):
             raise ConfigError("FEISHU_CHAT_ID provided but FEISHU_APP_ID or FEISHU_APP_SECRET missing")
+
+        # 验证钉钉配置
+        if self.dingtalk_app_key and not self.dingtalk_app_secret:
+            raise ConfigError("DINGTALK_APP_SECRET is required when DINGTALK_APP_KEY is set")
+        if self.dingtalk_app_key and not self.dingtalk_chat_id:
+            raise ConfigError("DINGTALK_CHAT_ID is required when DINGTALK_APP_KEY is set")
 
         # 验证钉钉webhook URL格式（如果提供）
         if self.dingtalk_webhook:
