@@ -10,6 +10,7 @@ class MessageProcessLog:
     share_link: Optional[str] = None
     folder_name: Optional[str] = None
     extraction_code: Optional[str] = None
+    source: str = 'feishu'  # 新增：消息来源，默认 feishu
     process_status: str = 'pending'  # pending, processing, success, failed, critical_error
     error_message: Optional[str] = None
     execution_summary_id: Optional[int] = None
