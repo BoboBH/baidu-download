@@ -48,9 +48,6 @@ class Settings:
         self.dingtalk_chat_id = os.getenv('DINGTALK_CHAT_ID', '')
         self.dingtalk_webhook = os.getenv('DINGTALK_WEBHOOK', '')
 
-        # 钉钉 Stream API 配置（用于消息接收服务）
-        self.dingtalk_enabled = os.getenv('DINGTALK_ENABLED', 'false').lower() == 'true'
-
         # 消息处理配置
         self.message_default_extraction_code = os.getenv('MESSAGE_DEFAULT_EXTRACTION_CODE', '0409')
 
@@ -172,9 +169,6 @@ class Settings:
             raise ConfigError("DINGTALK_APP_SECRET is required when DINGTALK_APP_KEY is set")
         if self.dingtalk_app_secret and not self.dingtalk_app_key:
             raise ConfigError("DINGTALK_APP_KEY is required when DINGTALK_APP_SECRET is set")
-
-        # DINGTALK_CHAT_ID 只在 REST API 模式需要，Stream API 不需要
-        # 所以这里不强制要求 DINGTALK_CHAT_ID
 
         # 验证钉钉webhook URL格式（如果提供）
         if self.dingtalk_webhook:
