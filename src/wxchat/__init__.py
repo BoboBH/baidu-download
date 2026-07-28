@@ -5,10 +5,12 @@
 """
 
 from .processor import DatabaseConnection, WeChatAccountSync, PDFGenerator, WeChatArticleProcessor
+from .commands import register_commands
 
 __all__ = [
     'DatabaseConnection',
     'WeChatAccountSync',
     'PDFGenerator',
     'WeChatArticleProcessor',
+    'register_commands'
 ]
