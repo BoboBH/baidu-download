@@ -1,3 +1,14 @@
+-- ================================================================================
+-- 微信公众号文章处理表创建脚本
+-- ================================================================================
+-- 用途: 创建wx_account和wx_article表用于微信公众号文章PDF转换和上传功能
+-- 执行条件: MySQL 5.7+ , test数据库已创建
+-- 执行方法: mysql -u root -p test < database/wxchat_tables.sql
+-- 安全性: 创建新表，不影响现有数据
+-- ================================================================================
+
+USE test;
+
 -- 微信公众号账号表
 CREATE TABLE IF NOT EXISTS wx_account (
     account_id VARCHAR(100) PRIMARY KEY COMMENT '账号ID',
@@ -29,3 +40,11 @@ CREATE TABLE IF NOT EXISTS wx_article (
     FOREIGN KEY (account_id) REFERENCES wx_account(account_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 COMMENT='微信公众号文章表';
+
+-- 验证表是否创建成功
+SELECT CONCAT('表 wx_account 创建成功!') AS status;
+SELECT CONCAT('表 wx_article 创建成功!') AS status;
+
+-- 显示新创建的表结构
+DESCRIBE wx_account;
+DESCRIBE wx_article;
