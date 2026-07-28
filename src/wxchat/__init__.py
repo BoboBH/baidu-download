@@ -4,9 +4,10 @@
 提供从wewe_rss数据库获取文章，转换为PDF，上传到SFTP服务器的功能。
 """
 
-from .processor import DatabaseConnection, WeChatAccountSync
+from .processor import DatabaseConnection, WeChatAccountSync, PDFGenerator
 
 __all__ = [
     'DatabaseConnection',
     'WeChatAccountSync',
+    'PDFGenerator',
 ]

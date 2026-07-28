@@ -7,6 +7,10 @@
 import logging
 from typing import Dict, List, Optional
 import pymysql
+import time
+import os
+
+from playwright.sync_api import sync_playwright
 
 from src.config.settings import Settings
 from src.wxchat.models import WeChatAccount, WeChatArticle, ProcessResult
@@ -144,3 +148,98 @@ class WeChatAccountSync:
         except Exception as e:
             logger.error(f"账号同步失败: {e}")
             raise
+
+
+class PDFGenerator:
+    """PDF生成器，使用Playwright生成网页PDF"""
+
+    def __init__(self, config: Settings):
+        """
+        初始化PDF生成器
+
+        Args:
+            config: 配置对象
+        """
+        self.config = config
+        self.base_url = config.wxchat_base_url
+        self.timeout = config.wxchat_pdf_timeout * 1000  # 转换为毫秒
+        self.image_wait_time = config.wxchat_image_wait_time
+        self.download_delay = config.wxchat_download_delay
+
+    def generate_pdf(self, article_id: str, output_path: str) -> bool:
+        """
+        生成PDF文件
+
+        Args:
+            article_id: 文章ID
+            output_path: PDF输出路径
+
+        Returns:
+            是否生成成功
+        """
+        url = f"{self.base_url}{article_id}"
+        logger.info(f"开始生成PDF: {url}")
+
+        browser = None
+        try:
+            with sync_playwright() as playwright:
+                # 启动Chromium浏览器
+                browser = playwright.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox']
+                )
+
+                # 创建浏览器上下文
+                context = browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                )
+
+                # 创建新页面
+                page = context.new_page()
+
+                # 设置额外的请求头
+                page.set_extra_http_headers({
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1'
+                })
+
+                # 访问文章页面
+                logger.info(f"访问文章页面: {url}")
+                page.goto(url, timeout=self.timeout, wait_until='networkidle')
+
+                # 等待图片加载完成
+                logger.info(f"等待图片加载 ({self.image_wait_time}秒)...")
+                time.sleep(self.image_wait_time)
+
+                # 确保输出目录存在
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+                # 生成PDF
+                page.pdf(
+                    path=output_path,
+                    format='A4',
+                    print_background=True,
+                    margin={'top': '1cm', 'right': '1cm', 'bottom': '1cm', 'left': '1cm'}
+                )
+
+                page.close()
+                context.close()
+
+                # 反限流延迟
+                logger.info(f"延迟 {self.download_delay} 秒...")
+                time.sleep(self.download_delay)
+
+                logger.info(f"PDF生成成功: {output_path}")
+                return True
+
+        except Exception as e:
+            logger.error(f"PDF生成失败: {e}")
+            return False
+
+        finally:
+            if browser:
+                browser.close()
