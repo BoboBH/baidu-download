@@ -48,6 +48,9 @@ class Settings:
         self.dingtalk_chat_id = os.getenv('DINGTALK_CHAT_ID', '')
         self.dingtalk_webhook = os.getenv('DINGTALK_WEBHOOK', '')
 
+        # 钉钉 Stream API 配置（用于消息接收服务）
+        self.dingtalk_enabled = os.getenv('DINGTALK_ENABLED', 'false').lower() == 'true'
+
         # 消息处理配置
         self.message_default_extraction_code = os.getenv('MESSAGE_DEFAULT_EXTRACTION_CODE', '0409')
 
@@ -70,6 +73,19 @@ class Settings:
         # 性能配置
         self.max_retries = self._get_int_env('MAX_RETRIES', default=3)
         self.concurrent_uploads = self._get_int_env('CONCURRENT_UPLOADS', default=1)
+
+        # 微信公众号配置
+        self.wxchat_enabled = os.getenv('WXCHAT_ENABLED', 'false').lower() == 'true'
+        self.wxchat_wewe_db_host = os.getenv('WXCHAT_WEWE_DB_HOST', '')
+        self.wxchat_wewe_db_port = self._get_int_env('WXCHAT_WEWE_DB_PORT', default=3306)
+        self.wxchat_wewe_db_user = os.getenv('WXCHAT_WEWE_DB_USER', '')
+        self.wxchat_wewe_db_password = os.getenv('WXCHAT_WEWE_DB_PASSWORD', '')
+        self.wxchat_wewe_db_name = os.getenv('WXCHAT_WEWE_DB_NAME', '')
+        self.wxchat_base_url = os.getenv('WXCHAT_BASE_URL', 'https://mp.weixin.qq.com/s/')
+        self.wxchat_pdf_timeout = self._get_int_env('WXCHAT_PDF_TIMEOUT', default=60)
+        self.wxchat_image_wait_time = self._get_int_env('WXCHAT_IMAGE_WAIT_TIME', default=20)
+        self.wxchat_download_delay = self._get_int_env('WXCHAT_DOWNLOAD_DELAY', default=5)
+        self.wxchat_max_days = self._get_int_env('WXCHAT_MAX_DAYS', default=30)
 
         # 验证关键配置
         self._validate_config()
@@ -120,6 +136,27 @@ class Settings:
             if not re.match(r'^\d{4}$', self.message_default_extraction_code):
                 raise ConfigError(f"Invalid MESSAGE_DEFAULT_EXTRACTION_CODE format: {self.message_default_extraction_code}. Expected 4 digits.")
 
+        # 验证微信配置（如果启用）
+        if self.wxchat_enabled:
+            if not self.wxchat_wewe_db_host:
+                raise ConfigError("WXCHAT_WEWE_DB_HOST is required when WXCHAT_ENABLED is true")
+            if not self.wxchat_wewe_db_user:
+                raise ConfigError("WXCHAT_WEWE_DB_USER is required when WXCHAT_ENABLED is true")
+            if not self.wxchat_wewe_db_password:
+                raise ConfigError("WXCHAT_WEWE_DB_PASSWORD is required when WXCHAT_ENABLED is true")
+            if not self.wxchat_wewe_db_name:
+                raise ConfigError("WXCHAT_WEWE_DB_NAME is required when WXCHAT_ENABLED is true")
+
+            # 验证数值参数合理性
+            if self.wxchat_pdf_timeout < 10 or self.wxchat_pdf_timeout > 300:
+                raise ConfigError(f"WXCHAT_PDF_TIMEOUT must be between 10 and 300: {self.wxchat_pdf_timeout}")
+            if self.wxchat_image_wait_time < 5 or self.wxchat_image_wait_time > 120:
+                raise ConfigError(f"WXCHAT_IMAGE_WAIT_TIME must be between 5 and 120: {self.wxchat_image_wait_time}")
+            if self.wxchat_download_delay < 1 or self.wxchat_download_delay > 60:
+                raise ConfigError(f"WXCHAT_DOWNLOAD_DELAY must be between 1 and 60: {self.wxchat_download_delay}")
+            if self.wxchat_max_days < 1 or self.wxchat_max_days > 365:
+                raise ConfigError(f"WXCHAT_MAX_DAYS must be between 1 and 365: {self.wxchat_max_days}")
+
     def _validate_feishu_config(self):
         """验证飞书配置的完整性（用于自动化模式）"""
         if self.feishu_app_id and not self.feishu_app_secret:
@@ -135,8 +172,9 @@ class Settings:
             raise ConfigError("DINGTALK_APP_SECRET is required when DINGTALK_APP_KEY is set")
         if self.dingtalk_app_secret and not self.dingtalk_app_key:
             raise ConfigError("DINGTALK_APP_KEY is required when DINGTALK_APP_SECRET is set")
-        if self.dingtalk_app_key and not self.dingtalk_chat_id:
-            raise ConfigError("DINGTALK_CHAT_ID is required when DINGTALK_APP_KEY is set")
+
+        # DINGTALK_CHAT_ID 只在 REST API 模式需要，Stream API 不需要
+        # 所以这里不强制要求 DINGTALK_CHAT_ID
 
         # 验证钉钉webhook URL格式（如果提供）
         if self.dingtalk_webhook:
