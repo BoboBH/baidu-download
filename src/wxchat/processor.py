@@ -9,11 +9,14 @@ from typing import Dict, List, Optional
 import pymysql
 import time
 import os
+from datetime import datetime, timedelta
+import tempfile
 
 from playwright.sync_api import sync_playwright
 
 from src.config.settings import Settings
 from src.wxchat.models import WeChatAccount, WeChatArticle, ProcessResult
+from src.uploader.sftp_client import SFTPClient
 
 logger = logging.getLogger(__name__)
 
@@ -243,3 +246,276 @@ class PDFGenerator:
         finally:
             if browser:
                 browser.close()
+
+
+class WeChatArticleProcessor:
+    """微信公众号文章处理器"""
+
+    def __init__(self, config: Settings):
+        """
+        初始化文章处理器
+
+        Args:
+            config: 配置对象
+        """
+        self.config = config
+        self.pdf_generator = PDFGenerator(config)
+
+    def process_articles(self, days: int = 3) -> ProcessResult:
+        """
+        处理微信公众号文章
+
+        Args:
+            days: 处理最近几天的文章，默认3天
+
+        Returns:
+            处理结果统计
+        """
+        logger.info(f"开始处理最近 {days} 天的微信文章")
+
+        result = ProcessResult()
+        result.start_time = datetime.now()
+
+        try:
+            # 计算时间范围
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+
+            # 从wewe_rss获取文章列表
+            articles = self._fetch_articles_from_wewe(start_date, end_date)
+            result.total_articles = len(articles)
+
+            logger.info(f"获取到 {len(articles)} 篇文章")
+
+            if not articles:
+                logger.warning("没有找到需要处理的文章")
+                result.end_time = datetime.now()
+                return result
+
+            # 处理每篇文章
+            for article in articles:
+                try:
+                    article_id = article.get('article_id')
+                    if not article_id:
+                        logger.warning(f"文章缺少article_id: {article}")
+                        result.failed_articles += 1
+                        continue
+
+                    # 检查是否已处理
+                    if self._is_article_processed(article_id):
+                        logger.info(f"文章已处理，跳过: {article_id}")
+                        result.skipped_articles += 1
+                        continue
+
+                    # 处理单篇文章
+                    if self._process_single_article(article):
+                        result.processed_articles += 1
+                    else:
+                        result.failed_articles += 1
+
+                except Exception as e:
+                    logger.error(f"处理文章失败: {e}")
+                    result.failed_articles += 1
+                    result.errors.append(str(e))
+
+            result.end_time = datetime.now()
+            logger.info(f"文章处理完成: 总计={result.total_articles}, "
+                       f"成功={result.processed_articles}, "
+                       f"失败={result.failed_articles}, "
+                       f"跳过={result.skipped_articles}")
+
+        except Exception as e:
+            logger.error(f"文章处理异常: {e}")
+            result.errors.append(str(e))
+            result.end_time = datetime.now()
+
+        return result
+
+    def _fetch_articles_from_wewe(self, start_date, end_date) -> List[Dict]:
+        """
+        从wewe_rss数据库获取文章列表
+
+        Args:
+            start_date: 开始日期
+            end_date: 结束日期
+
+        Returns:
+            文章列表
+        """
+        articles = []
+
+        try:
+            with DatabaseConnection(self.config, use_wewe_db=True) as conn:
+                with conn.cursor() as cursor:
+                    # 假设wewe_rss数据库中有article表
+                    cursor.execute("""
+                        SELECT
+                            article_id,
+                            account_id,
+                            title,
+                            publish_date,
+                            content_url
+                        FROM article
+                        WHERE publish_date BETWEEN %s AND %s
+                        ORDER BY publish_date DESC
+                    """, (start_date, end_date))
+
+                    articles = cursor.fetchall()
+
+            logger.info(f"从wewe_rss获取到 {len(articles)} 篇文章")
+            return articles
+
+        except Exception as e:
+            logger.error(f"获取文章列表失败: {e}")
+            return []
+
+    def _process_single_article(self, article: Dict) -> bool:
+        """
+        处理单篇文章：生成PDF并上传
+
+        Args:
+            article: 文章信息
+
+        Returns:
+            是否处理成功
+        """
+        article_id = article.get('article_id')
+        account_id = article.get('account_id')
+        title = article.get('title')
+        publish_date = article.get('publish_date')
+
+        logger.info(f"处理文章: {title} ({article_id})")
+
+        pdf_url = None
+        error_message = None
+
+        try:
+            # 创建临时文件
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
+                temp_pdf_path = tmp_file.name
+
+            # 生成PDF
+            if not self.pdf_generator.generate_pdf(article_id, temp_pdf_path):
+                error_message = "PDF生成失败"
+                logger.error(f"PDF生成失败: {article_id}")
+                self._update_article_status(article_id, account_id, title, publish_date, pdf_url, error_message)
+                return False
+
+            # 上传到SFTP
+            try:
+                with SFTPClient() as sftp:
+                    # 生成远程路径
+                    remote_filename = f"{article_id}.pdf"
+                    remote_path = f"{sftp.remote_path}/{remote_filename}"
+
+                    # 上传文件
+                    if sftp.upload_file(temp_pdf_path, remote_path):
+                        # 生成PDF URL
+                        pdf_url = f"{sftp.remote_path}/{remote_filename}"
+                        logger.info(f"PDF上传成功: {pdf_url}")
+                    else:
+                        error_message = "SFTP上传失败"
+                        logger.error(f"SFTP上传失败: {article_id}")
+
+            except Exception as e:
+                error_message = f"SFTP上传异常: {str(e)}"
+                logger.error(f"SFTP上传异常: {e}")
+
+            # 清理临时文件
+            try:
+                os.unlink(temp_pdf_path)
+            except Exception as e:
+                logger.warning(f"清理临时文件失败: {e}")
+
+            # 更新处理状态
+            self._update_article_status(article_id, account_id, title, publish_date, pdf_url, error_message)
+
+            return error_message is None
+
+        except Exception as e:
+            error_message = f"处理异常: {str(e)}"
+            logger.error(f"处理文章异常: {e}")
+            self._update_article_status(article_id, account_id, title, publish_date, pdf_url, error_message)
+            return False
+
+    def _is_article_processed(self, article_id: str) -> bool:
+        """
+        检查文章是否已处理
+
+        Args:
+            article_id: 文章ID
+
+        Returns:
+            是否已处理
+        """
+        try:
+            with DatabaseConnection(self.config, use_wewe_db=False) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT COUNT(*) as count
+                        FROM wx_article
+                        WHERE article_id = %s
+                        AND processed_at IS NOT NULL
+                    """, (article_id,))
+
+                    result = cursor.fetchone()
+                    is_processed = result['count'] > 0
+
+                    logger.debug(f"文章处理状态检查: {article_id} -> {is_processed}")
+                    return is_processed
+
+        except Exception as e:
+            logger.error(f"检查文章处理状态失败: {e}")
+            return False
+
+    def _update_article_status(self, article_id, account_id, title, publish_date, pdf_url, error_message):
+        """
+        更新文章处理状态
+
+        Args:
+            article_id: 文章ID
+            account_id: 账号ID
+            title: 文章标题
+            publish_date: 发布日期
+            pdf_url: PDF URL
+            error_message: 错误信息
+        """
+        try:
+            with DatabaseConnection(self.config, use_wewe_db=False) as conn:
+                with conn.cursor() as cursor:
+                    # 使用UPSERT语法
+                    cursor.execute("""
+                        INSERT INTO wx_article (
+                            article_id,
+                            account_id,
+                            title,
+                            publish_date,
+                            pdf_url,
+                            error_message,
+                            processed_at,
+                            updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                        ON DUPLICATE KEY UPDATE
+                            account_id = VALUES(account_id),
+                            title = VALUES(title),
+                            publish_date = VALUES(publish_date),
+                            pdf_url = VALUES(pdf_url),
+                            error_message = VALUES(error_message),
+                            processed_at = VALUES(processed_at),
+                            updated_at = CURRENT_TIMESTAMP
+                    """, (
+                        article_id,
+                        account_id,
+                        title,
+                        publish_date,
+                        pdf_url,
+                        error_message,
+                        datetime.now() if error_message is None else None
+                    ))
+
+                conn.commit()
+                logger.debug(f"文章状态已更新: {article_id}")
+
+        except Exception as e:
+            logger.error(f"更新文章状态失败: {e}")
