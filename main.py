@@ -5,12 +5,14 @@
 
 import sys
 import argparse
+import asyncio
 from src.processor.file_processor import FileProcessor
 from src.processor.auto_processor import AutoProcessor
 from src.processor.message_receiver import MessageReceiver
 from src.processor.file_transfer_processor import FileTransferProcessor
 from src.config.settings import ConfigError, Settings
 from src.utils.logger import get_logger
+from src.wxchat.processor import WeChatAccountSync, WeChatArticleProcessor
 
 logger = get_logger(__name__)
 
@@ -42,6 +44,17 @@ def parse_arguments() -> argparse.Namespace:
     python main.py --receive-messages
     # 步骤2: 处理待处理消息
     python main.py --process-pending
+
+  钉钉服务模式（常驻进程）:
+    python main.py --dingtalk-service
+    python main.py --dingtalk-service --verbose
+
+  微信模式 - 处理文章:
+    python main.py --wxchat
+    python main.py --wxchat --wxchat-days 7 --verbose
+
+  微信模式 - 同步账号:
+    python main.py --wxchat --wxchat-sync-accounts
         '''
     )
 
@@ -99,10 +112,36 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        '--dingtalk-service',
+        action='store_true',
+        help='启动钉钉消息接收服务（常驻进程）'
+    )
+
+    parser.add_argument(
         '--source',
         choices=['feishu', 'dingtalk'],
         default='feishu',
-        help='消息来源：feishu（飞书）或 dingtalk（钉钉），默认：feishu'
+        help='消息来源平台（feishu或dingtalk，默认为feishu）'
+    )
+
+    parser.add_argument(
+        '--wxchat', '--wechat',
+        dest='wxchat',
+        action='store_true',
+        help='微信模式：处理微信公众号文章，生成PDF并上传'
+    )
+
+    parser.add_argument(
+        '--wxchat-days',
+        type=int,
+        default=3,
+        help='微信模式：处理最近几天的文章（默认3天）'
+    )
+
+    parser.add_argument(
+        '--wxchat-sync-accounts',
+        action='store_true',
+        help='微信模式：仅同步微信公众号账号信息'
     )
 
     return parser.parse_args()
@@ -134,6 +173,102 @@ def main() -> int:
 
         logger.info("配置验证通过")
 
+        # 钉钉服务模式：启动钉钉消息接收常驻服务
+        if args.dingtalk_service:
+            logger.info("启动钉钉消息接收服务...")
+
+            # 验证钉钉配置
+            if not settings.dingtalk_app_key or not settings.dingtalk_app_secret:
+                logger.error("DINGTALK_APP_KEY and DINGTALK_APP_SECRET must be set in .env file")
+                return 1
+
+            # 启动钉钉服务
+            from src.feishu.dingtalk_group_client import main as dingtalk_main
+
+            print("=" * 60)
+            print("DingTalk Message Receiver Service")
+            print("=" * 60)
+            print(f"App Key: {settings.dingtalk_app_key}")
+            print(f"Database: {settings.db_name}")
+            print("消息要求: 必须@机器人")
+            print("Supported format: 260723：https://pan.baidu.com/s/xxx")
+            print("Press Ctrl+C to stop the service")
+            print("=" * 60)
+
+            # 运行钉钉服务（使用默认设置）
+            exit_code = asyncio.run(dingtalk_main())
+            return exit_code
+
+        # 微信模式：处理微信公众号文章
+        if args.wxchat or args.wxchat_sync_accounts:
+            logger.info("微信模式：开始处理微信公众号功能...")
+
+            # 仅验证微信数据库配置（不需要检查WXCHAT_ENABLED开关）
+            if not settings.wxchat_wewe_db_host or not settings.wxchat_wewe_db_name:
+                logger.error("WXCHAT_WEWE_DB_HOST and WXCHAT_WEWE_DB_NAME must be set in .env file")
+                return 1
+
+            # 账号同步模式
+            if args.wxchat_sync_accounts:
+                logger.info("微信模式 - 账号同步：开始同步微信公众号账号...")
+
+                try:
+                    account_sync = WeChatAccountSync(settings)
+                    synced_count = account_sync.sync_accounts()
+
+                    logger.info("=" * 60)
+                    logger.info("微信账号同步完成！")
+                    logger.info(f"同步账号数: {synced_count} 个")
+                    logger.info("=" * 60)
+
+                    return 0  # 成功同步，即使账号数为0也不是错误
+
+                except Exception as e:
+                    logger.error(f"微信账号同步失败: {e}", exc_info=True)
+                    return 1
+
+            # 文章处理模式
+            if args.wxchat:
+                days = args.wxchat_days
+                logger.info(f"微信模式 - 文章处理：开始处理最近 {days} 天的文章...")
+
+                # 验证天数参数
+                if days < 1 or days > settings.wxchat_max_days:
+                    logger.error(f"天数必须在 1 到 {settings.wxchat_max_days} 之间")
+                    return 1
+
+                try:
+                    processor = WeChatArticleProcessor(settings)
+                    result = processor.process_articles(days=days)
+
+                    logger.info("=" * 60)
+                    logger.info("微信文章处理完成！")
+                    logger.info(f"总计文章: {result.total_articles} 篇")
+                    logger.info(f"成功处理: {result.processed_articles} 篇")
+                    logger.info(f"失败文章: {result.failed_articles} 篇")
+                    logger.info(f"跳过文章: {result.skipped_articles} 篇")
+
+                    if result.start_time and result.end_time:
+                        duration = (result.end_time - result.start_time).total_seconds()
+                        logger.info(f"处理耗时: {duration:.2f} 秒")
+
+                    if result.errors:
+                        total_errors = len(result.errors)
+                        display_count = min(5, total_errors)
+                        logger.warning(f"错误信息: {total_errors} 个 (显示前 {display_count} 个)")
+                        for error in result.errors[:display_count]:
+                            logger.warning(f"  - {error}")
+                        if total_errors > display_count:
+                            logger.warning(f"  ... 还有 {total_errors - display_count} 个错误未显示")
+
+                    logger.info("=" * 60)
+
+                    return 0 if result.failed_articles == 0 else 1
+
+                except Exception as e:
+                    logger.error(f"微信文章处理失败: {e}", exc_info=True)
+                    return 1
+
         # 接收模式：专职接收飞书消息
         if args.receive_messages:
             logger.info(f"接收模式：开始接收{args.source}消息...")
@@ -142,7 +277,7 @@ def main() -> int:
                 result = receiver.receive_messages()
 
                 logger.info("=" * 60)
-                logger.info(f"{args.source.upper()}消息接收完成！")
+                logger.info("飞书消息接收完成！")
                 logger.info(f"总计接收: {result.total_messages} 条消息")
                 logger.info(f"新增消息: {result.new_messages} 条")
                 logger.info(f"重复消息: {result.duplicate_messages} 条")

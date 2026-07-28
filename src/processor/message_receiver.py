@@ -30,24 +30,22 @@ class ReceiveResult:
 class MessageReceiver:
     """飞书消息接收器 - 专职接收和解析飞书消息"""
 
-    def __init__(self, settings: Optional[Settings] = None, source: str = 'feishu'):
+    def __init__(self, settings: Optional[Settings] = None):
         """
         Initialize MessageReceiver with required dependencies
 
         Args:
             settings: Configuration object, defaults to new Settings instance
-            source: 消息来源 'feishu' 或 'dingtalk'
+
+        Note:
+            钉钉消息接收请使用 --dingtalk-service 模式启动 dingtalk_group_client
         """
-        self.source = source
+        self.source = 'feishu'  # 只支持飞书消息
         self.settings = settings or Settings()
         self.logger = logger
 
-        # 根据来源选择客户端
-        if source == 'dingtalk':
-            from src.feishu.dingtalk_client import DingtalkMessageClient
-            self.client = DingtalkMessageClient(self.settings)
-        else:
-            self.client = FeishuMessageClient(self.settings)
+        # 使用飞书客户端
+        self.client = FeishuMessageClient(self.settings)
 
         # Initialize components
         self.message_parser = MessageParser()
@@ -60,7 +58,7 @@ class MessageReceiver:
         )
         self.dingtalk_notifier = DingtalkNotifier(self.settings)
 
-        self.logger.info(f"MessageReceiver initialized successfully (source: {source})")
+        self.logger.info("MessageReceiver initialized successfully (feishu)")
 
     def receive_messages(self) -> ReceiveResult:
         """

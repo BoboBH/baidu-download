@@ -1,0 +1,200 @@
+import asyncio
+import sys
+import os
+from datetime import datetime
+from dingtalk_stream import AckMessage, DingTalkStreamClient, ChatbotMessage, Credential, CallbackHandler, CallbackMessage
+
+# 添加项目根目录到Python路径
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from src.feishu.message_parser import MessageParser
+from src.database.message_models import MessageProcessLog
+from src.database.repository import DatabaseRepository
+from src.config.settings import Settings
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+class MessageHandler(CallbackHandler):
+    def __init__(self, settings: Settings = None):
+        super().__init__()
+
+        # 初始化组件
+        self.parser = MessageParser()
+        self.settings = settings or Settings()
+
+        # 消息统计
+        self.total_received = 0
+        self.total_processed = 0
+        self.total_skipped = 0
+        self.total_errors = 0
+        self.total_at_bot = 0  # @机器人的消息数
+
+        logger.info("MessageHandler initialized successfully")
+        logger.info("消息要求：必须@机器人才会处理")
+
+    async def process(self, callback_message: CallbackMessage):
+        """处理钉钉消息 - 快速响应避免丢消息"""
+        start_time = datetime.now()
+        self.total_received += 1
+        db_repo = None
+
+        try:
+            # 将 CallbackMessage 的 data 转换为 ChatbotMessage
+            chatbot_message = ChatbotMessage.from_dict(callback_message.data)
+
+            # 🔍 详细诊断信息
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            logger.info("=" * 50)
+            logger.info(f"⏰ {current_time} - 📨 消息 #{self.total_received}")
+            logger.info(f"Conversation ID: {chatbot_message.conversation_id}")
+            logger.info(f"群名称: {chatbot_message.conversation_title}")
+            logger.info(f"发送者: {chatbot_message.sender_nick} ({chatbot_message.sender_id})")
+            logger.info(f"消息类型: {chatbot_message.message_type}")
+
+            # 只处理文本消息
+            if chatbot_message.message_type != 'text' or not chatbot_message.text:
+                logger.debug(f"Ignoring non-text message: {chatbot_message.message_type}")
+                self.total_skipped += 1
+                return AckMessage.STATUS_OK, "OK"
+
+            message_content = chatbot_message.text.content
+            logger.info(f"消息内容: {message_content}")
+            logger.info(f"@机器人: {chatbot_message.is_in_at_list}")
+
+            # 检查是否@机器人（必须）
+            if not chatbot_message.is_in_at_list:
+                logger.info(f"⚠️  消息未@机器人，跳过")
+                self.total_skipped += 1
+                return AckMessage.STATUS_OK, "OK"
+
+            self.total_at_bot += 1
+
+            # 解析消息内容
+            parse_result = self.parser.parse_message(message_content)
+
+            if not parse_result:
+                logger.info(f"⚠️  消息不包含百度链接，跳过: {message_content[:50]}...")
+                self.total_skipped += 1
+                return AckMessage.STATUS_OK, "OK"
+
+            # 检查是否为钉钉消息
+            if parse_result.source != 'dingtalk':
+                logger.warning(f"Unexpected message source: {parse_result.source}")
+                self.total_skipped += 1
+                return AckMessage.STATUS_OK, "OK"
+
+            # 计算消息哈希（用于去重）
+            message_hash = self.parser.calculate_message_hash(message_content)
+
+            # 🔑 只在需要时才创建数据库连接
+            db_repo = DatabaseRepository(
+                host=self.settings.db_host,
+                port=self.settings.db_port,
+                user=self.settings.db_user,
+                password=self.settings.db_password,
+                database=self.settings.db_name
+            )
+            logger.debug("数据库连接已创建")
+
+            # 检查消息是否已处理
+            existing_message = db_repo.get_message_by_hash(message_hash)
+            if existing_message:
+                logger.info(f"♻️  消息已处理，跳过: {message_hash[:8]}...")
+                self.total_skipped += 1
+                return AckMessage.STATUS_OK, "OK"
+
+            # 创建消息处理日志
+            processing_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+
+            message_log = MessageProcessLog(
+                message_hash=message_hash,
+                original_message=message_content,
+                share_link=parse_result.share_link,
+                folder_name=parse_result.folder_name,
+                extraction_code=parse_result.extraction_code,
+                source='dingtalk',
+                process_status='pending',
+                processing_time_ms=processing_time_ms
+            )
+
+            # 存储到数据库
+            log_id = db_repo.insert_message_log(message_log)
+            self.total_processed += 1
+
+            logger.info(f"✅ 消息已存储: {parse_result.folder_name} (ID: {log_id})")
+            logger.info(f"📊 统计: 收到={self.total_received}, @机器={self.total_at_bot}, 处理={self.total_processed}, 跳过={self.total_skipped}, 错误={self.total_errors}")
+
+            return AckMessage.STATUS_OK, "OK"
+
+        except Exception as e:
+            self.total_errors += 1
+            logger.error(f"❌ 处理消息时出错: {e}", exc_info=True)
+            logger.info(f"📊 统计: 收到={self.total_received}, @机器={self.total_at_bot}, 处理={self.total_processed}, 跳过={self.total_skipped}, 错误={self.total_errors}")
+            return AckMessage.STATUS_SYSTEM_EXCEPTION, str(e)
+
+        finally:
+            # 🔑 立即关闭数据库连接
+            if db_repo:
+                db_repo.close()
+                logger.debug("数据库连接已关闭")
+
+async def main():
+    """启动钉钉消息接收客户端"""
+    handler = None
+    connection_monitor = None
+
+    async def monitor_connection():
+        """连接状态监控"""
+        while True:
+            await asyncio.sleep(30)  # 每30秒报告一次
+            if handler:
+                logger.info(f"🔗 连接状态 - 📊 统计: 收到={handler.total_received}, @机器={handler.total_at_bot}, 处理={handler.total_processed}, 跳过={handler.total_skipped}, 错误={handler.total_errors}")
+
+    try:
+        # 加载配置
+        settings = Settings()
+
+        # 验证钉钉配置
+        if not settings.dingtalk_app_key or not settings.dingtalk_app_secret:
+            logger.error("DINGTALK_APP_KEY and DINGTALK_APP_SECRET must be set in .env file")
+            return 1
+
+        # 创建客户端和处理器
+        client = DingTalkStreamClient(Credential(settings.dingtalk_app_key, settings.dingtalk_app_secret))
+        handler = MessageHandler(settings)
+        client.register_callback_handler(ChatbotMessage.TOPIC, handler)
+
+        logger.info("=" * 50)
+        logger.info("🚀 DingTalk Message Receiver Service Started!")
+        logger.info("📱 消息要求：必须@机器人才会处理")
+        logger.info("📝 Supported format: 260723：https://pan.baidu.com/s/xxx")
+        logger.info("🔍 每30秒输出连接状态统计")
+        logger.info("⏹️  Press Ctrl+C to stop the service")
+        logger.info("=" * 50)
+
+        # 启动连接监控
+        connection_monitor = asyncio.create_task(monitor_connection())
+
+        # 启动客户端
+        await client.start()
+
+    except KeyboardInterrupt:
+        logger.info("⏹️  Received shutdown signal, stopping service...")
+
+    except Exception as e:
+        logger.error(f"❌ Service error: {e}", exc_info=True)
+        return 1
+
+    finally:
+        # 取消监控任务
+        if connection_monitor:
+            connection_monitor.cancel()
+        # 清理资源（数据库连接已在每次处理后自动关闭）
+        logger.info("✅ Service stopped")
+
+    return 0
+
+if __name__ == "__main__":
+    exit_code = asyncio.run(main())
+    exit(exit_code)

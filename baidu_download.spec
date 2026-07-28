@@ -12,7 +12,7 @@ PyInstaller配置文件 - 百度网盘PDF文件自动传输系统
   - 所有项目依赖项: pip install -r requirements.txt
 
 作者: baidu-download team
-版本: 1.1.5
+版本: 1.2.3
 """
 
 import os
@@ -38,6 +38,9 @@ datas = [
     # 数据库初始化脚本
     (base_path / 'middle' / 'db_init.sql', 'middle'),
 
+    # 微信文章处理数据库脚本
+    (base_path / 'database' / 'wxchat_tables.sql', 'database'),
+
     # 百度网盘CLI工具 (如果存在)
     (base_path / 'BaiduPCS-Go.exe', '.'),
 ]
@@ -56,6 +59,10 @@ hidden_imports = [
     'dotenv',
     'colorama',
     'requests',
+    'dingtalk_stream',
+    'asyncio',
+    'playwright',
+    'playwright.sync_api',
 
     # 项目模块 (确保所有src模块都被包含)
     'src.config.settings',
@@ -66,9 +73,15 @@ hidden_imports = [
     'src.uploader.sftp_client',
     'src.feishu.feishu_client',
     'src.feishu.message_parser',
+    'src.feishu.dingtalk_group_client',
     'src.notification.dingtalk_notifier',
     'src.processor.file_processor',
     'src.processor.auto_processor',
+    'src.processor.message_receiver',
+    'src.processor.file_transfer_processor',
+    'src.wxchat.models',
+    'src.wxchat.processor',
+    'src.wxchat.commands',
     'src.utils.logger',
     'src.utils.filename_handler',
     'src.utils.resource_utils',
