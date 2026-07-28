@@ -6,7 +6,7 @@ import pytest
 import tempfile
 import os
 from datetime import datetime, timedelta
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, PropertyMock
 from src.config.settings import Settings
 from src.wxchat.processor import WeChatAccountSync, WeChatArticleProcessor, DatabaseConnection
 from src.wxchat.models import ProcessResult
@@ -23,6 +23,11 @@ class TestDatabaseConnection:
         config.wxchat_wewe_db_user = 'root'
         config.wxchat_wewe_db_password = 'password'
         config.wxchat_wewe_db_name = 'wewe_rss'
+        config.db_host = 'localhost'
+        config.db_port = 3306
+        config.db_user = 'root'
+        config.db_password = 'password'
+        config.db_name = 'test'
 
         conn = DatabaseConnection(config, use_wewe_db=True)
 
@@ -37,6 +42,11 @@ class TestDatabaseConnection:
         config.db_user = 'root'
         config.db_password = 'password'
         config.db_name = 'test'
+        config.wxchat_wewe_db_host = ''
+        config.wxchat_wewe_db_port = 3306
+        config.wxchat_wewe_db_user = ''
+        config.wxchat_wewe_db_password = ''
+        config.wxchat_wewe_db_name = ''
 
         conn = DatabaseConnection(config, use_wewe_db=False)
 
@@ -53,6 +63,16 @@ class TestWeChatAccountSync:
         # 模拟配置
         config = Mock()
         config.wxchat_enabled = True
+        config.wxchat_wewe_db_host = 'localhost'
+        config.wxchat_wewe_db_port = 3306
+        config.wxchat_wewe_db_user = 'root'
+        config.wxchat_wewe_db_password = 'password'
+        config.wxchat_wewe_db_name = 'wewe_rss'
+        config.db_host = 'localhost'
+        config.db_port = 3306
+        config.db_user = 'root'
+        config.db_password = 'password'
+        config.db_name = 'test'
 
         # 模拟wewe_rss数据库返回的账号数据
         mock_wewe_conn = Mock()
@@ -61,14 +81,10 @@ class TestWeChatAccountSync:
             {'id': 'acc1', 'mp_name': '测试账号1'},
             {'id': 'acc2', 'mp_name': '测试账号2'}
         ]
-        mock_wewe_conn.cursor.return_value.__enter__.return_value = mock_wewe_cursor
-        mock_wewe_conn.commit = Mock()
 
         # 模拟test数据库
         mock_test_conn = Mock()
         mock_test_cursor = Mock()
-        mock_test_conn.cursor.return_value.__enter__.return_value = mock_test_cursor
-        mock_test_conn.commit = Mock()
 
         # 配置DatabaseConnection上下文管理器
         mock_wewe_db_instance = Mock()
@@ -80,6 +96,17 @@ class TestWeChatAccountSync:
         mock_test_db_instance.__exit__ = Mock(return_value=None)
 
         mock_db_conn.side_effect = [mock_wewe_db_instance, mock_test_db_instance]
+
+        # 配置cursor返回上下文管理器
+        mock_wewe_cm = MagicMock()
+        mock_wewe_cm.__enter__ = Mock(return_value=mock_wewe_cursor)
+        mock_wewe_cm.__exit__ = Mock(return_value=None)
+        mock_wewe_conn.cursor = Mock(return_value=mock_wewe_cm)
+
+        mock_test_cm = MagicMock()
+        mock_test_cm.__enter__ = Mock(return_value=mock_test_cursor)
+        mock_test_cm.__exit__ = Mock(return_value=None)
+        mock_test_conn.cursor = Mock(return_value=mock_test_cm)
 
         # 创建同步器并执行同步
         syncer = WeChatAccountSync(config)
@@ -94,18 +121,40 @@ class TestWeChatAccountSync:
     def test_sync_accounts_no_accounts(self, mock_db_conn):
         """测试没有账号的情况"""
         config = Mock()
+        config.wxchat_wewe_db_host = 'localhost'
+        config.wxchat_wewe_db_port = 3306
+        config.wxchat_wewe_db_user = 'root'
+        config.wxchat_wewe_db_password = 'password'
+        config.wxchat_wewe_db_name = 'wewe_rss'
+        config.db_host = 'localhost'
+        config.db_port = 3306
+        config.db_user = 'root'
+        config.db_password = 'password'
+        config.db_name = 'test'
 
         # 模拟空结果
-        mock_conn = Mock()
-        mock_cursor = Mock()
-        mock_cursor.fetchall.return_value = []
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_wewe_conn = Mock()
+        mock_wewe_cursor = Mock()
+        mock_wewe_cursor.fetchall.return_value = []
 
-        mock_db_instance = Mock()
-        mock_db_instance.__enter__ = Mock(return_value=mock_conn)
-        mock_db_instance.__exit__ = Mock(return_value=None)
+        mock_test_conn = Mock()
 
-        mock_db_conn.return_value = mock_db_instance
+        # 配置DatabaseConnection上下文管理器
+        mock_wewe_db_instance = Mock()
+        mock_wewe_db_instance.__enter__ = Mock(return_value=mock_wewe_conn)
+        mock_wewe_db_instance.__exit__ = Mock(return_value=None)
+
+        mock_test_db_instance = Mock()
+        mock_test_db_instance.__enter__ = Mock(return_value=mock_test_conn)
+        mock_test_db_instance.__exit__ = Mock(return_value=None)
+
+        mock_db_conn.side_effect = [mock_wewe_db_instance, mock_test_db_instance]
+
+        # 配置cursor返回上下文管理器
+        mock_wewe_cm = MagicMock()
+        mock_wewe_cm.__enter__ = Mock(return_value=mock_wewe_cursor)
+        mock_wewe_cm.__exit__ = Mock(return_value=None)
+        mock_wewe_conn.cursor = Mock(return_value=mock_wewe_cm)
 
         syncer = WeChatAccountSync(config)
         count = syncer.sync_accounts()
@@ -120,6 +169,10 @@ class TestWeChatArticleProcessor:
         """测试初始化处理器"""
         config = Mock()
         config.wxchat_max_days = 30
+        config.wxchat_base_url = 'https://mp.weixin.qq.com/s/'
+        config.wxchat_pdf_timeout = 60
+        config.wxchat_image_wait_time = 20
+        config.wxchat_download_delay = 5
 
         processor = WeChatArticleProcessor(config)
 
@@ -131,6 +184,10 @@ class TestWeChatArticleProcessor:
         """测试无效的天数参数"""
         config = Mock()
         config.wxchat_max_days = 30
+        config.wxchat_base_url = 'https://mp.weixin.qq.com/s/'
+        config.wxchat_pdf_timeout = 60
+        config.wxchat_image_wait_time = 20
+        config.wxchat_download_delay = 5
 
         processor = WeChatArticleProcessor(config)
 
@@ -143,18 +200,27 @@ class TestWeChatArticleProcessor:
         """测试没有文章的情况"""
         config = Mock()
         config.wxchat_max_days = 30
+        config.wxchat_base_url = 'https://mp.weixin.qq.com/s/'
+        config.wxchat_pdf_timeout = 60
+        config.wxchat_image_wait_time = 20
+        config.wxchat_download_delay = 5
 
         # 模拟数据库返回空结果
         mock_conn = Mock()
         mock_cursor = Mock()
         mock_cursor.fetchall.return_value = []
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
 
         mock_db_instance = Mock()
         mock_db_instance.__enter__ = Mock(return_value=mock_conn)
         mock_db_instance.__exit__ = Mock(return_value=None)
 
         mock_db_conn.return_value = mock_db_instance
+
+        # 配置cursor返回上下文管理器
+        mock_cm = MagicMock()
+        mock_cm.__enter__ = Mock(return_value=mock_cursor)
+        mock_cm.__exit__ = Mock(return_value=None)
+        mock_conn.cursor = Mock(return_value=mock_cm)
 
         processor = WeChatArticleProcessor(config)
         result = processor.process_articles(days=3)
