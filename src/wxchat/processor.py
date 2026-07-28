@@ -195,7 +195,13 @@ class PDFGenerator:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
 
-            response = requests.get(url, headers=headers, timeout=self.config.wxchat_pdf_timeout)
+            # 禁用代理，避免代理连接错误
+            proxies = {
+                'http': None,
+                'https': None,
+            }
+
+            response = requests.get(url, headers=headers, proxies=proxies, timeout=self.config.wxchat_pdf_timeout)
 
             if response.status_code == 200:
                 html_content = response.content.decode('utf-8', errors='ignore')
