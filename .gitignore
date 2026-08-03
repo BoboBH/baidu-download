@@ -62,6 +62,7 @@ release_clean/
 release_final/
 release_package/
 release-old-*/
+release/
 
 # Database migrations (keep structure, ignore temp data)
 database/migrations/*.tmp
