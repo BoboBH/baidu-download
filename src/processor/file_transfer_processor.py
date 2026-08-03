@@ -72,7 +72,7 @@ class FileTransferProcessor:
 
     def get_pending_messages(self) -> List[MessageProcessLog]:
         """
-        获取待处理的消息列表
+        获取待处理的消息列表（包括pending和failed状态）
 
         Returns:
             待处理消息列表
@@ -80,10 +80,16 @@ class FileTransferProcessor:
         try:
             cursor = self.db_repo.connection.cursor()
 
+            # 修复：同时查询pending和failed状态的消息
             sql = """
             SELECT * FROM message_process_log
-            WHERE process_status = 'pending'
-            ORDER BY created_at ASC
+            WHERE process_status IN ('pending', 'failed')
+            ORDER BY
+                CASE
+                    WHEN process_status = 'failed' THEN 1  # 优先重试失败的消息
+                    ELSE 0
+                END,
+                created_at ASC
             LIMIT 10
             """
 
@@ -109,7 +115,11 @@ class FileTransferProcessor:
                 ))
 
             cursor.close()
-            self.logger.info(f"Found {len(messages)} pending messages")
+
+            # 统计各类消息数量
+            pending_count = sum(1 for m in messages if m.process_status == 'pending')
+            failed_count = sum(1 for m in messages if m.process_status == 'failed')
+            self.logger.info(f"Found {len(messages)} messages total (pending: {pending_count}, failed: {failed_count})")
             return messages
 
         except Exception as e:

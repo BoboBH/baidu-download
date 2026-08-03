@@ -85,6 +85,7 @@ class MessageParser:
         优先级：
         1. 钉钉格式（新增）
         2. 飞书格式（现有）
+        3. 通用链接格式（使用默认提取码）
 
         Args:
             content: 消息内容
@@ -113,40 +114,59 @@ class MessageParser:
         # 1. 尝试钉钉格式
         dingtalk_match = self._match_dingtalk_format(content)
         if dingtalk_match:
-            extraction_code = dingtalk_match.group(1)  # 260723
+            folder_name = dingtalk_match.group(1)  # 260723 - 从消息中提取作为目录名
             share_link = dingtalk_match.group(2)       # https://...
-            folder_name = extraction_code  # 直接使用提取码作为文件夹名
+            extraction_code = self.settings.message_default_extraction_code  # 从配置中取提取码，默认0409
 
             logger.info(f"DingTalk message parsed successfully: {folder_name}")
+            logger.debug(f"Using folder name from message: {folder_name}, extraction code from config: {extraction_code}")
             return ParseResult(
                 source='dingtalk',
                 share_link=share_link,
                 folder_name=folder_name,
-                extraction_code=extraction_code,
+                extraction_code=extraction_code,  # 使用配置中的提取码
                 raw_content=content
             )
 
         # 2. 尝试飞书格式（保留原有逻辑）
         feishu_match = self._match_feishu_format(content)
         if feishu_match:
-            extraction_code = feishu_match.group(1)
+            folder_name = feishu_match.group(1)  # 260723 - 从消息中提取作为目录名
             share_link = feishu_match.group(2)
-
-            # 从消息中提取文件夹名
-            folder_name = self._extract_folder_name(content, extraction_code)
-            if not folder_name:
-                return None
+            extraction_code = self.settings.message_default_extraction_code  # 从配置中取提取码，默认0409
 
             logger.info(f"Feishu message parsed successfully: {folder_name}")
+            logger.debug(f"Using folder name from message: {folder_name}, extraction code from config: {extraction_code}")
             return ParseResult(
                 source='feishu',
+                share_link=share_link,
+                folder_name=folder_name,
+                extraction_code=extraction_code,  # 使用配置中的提取码
+                raw_content=content
+            )
+
+        # 3. 尝试通用链接格式（只有链接，没有目录名）
+        # 匹配任何百度网盘链接，即使没有明确的提取码
+        link_pattern = re.compile(r'https://pan\.baidu\.com/s/[A-Za-z0-9_-]+')
+        link_match = link_pattern.search(content)
+        if link_match:
+            share_link = link_match.group(0)
+            # 从配置中取提取码，默认0409
+            extraction_code = self.settings.message_default_extraction_code
+            # 对于没有明确目录名的消息，使用提取码作为目录名
+            folder_name = extraction_code
+
+            logger.info(f"Message parsed with config extraction code: {folder_name}")
+            logger.debug(f"Using extraction code from config: {extraction_code}, folder name same as extraction code")
+            return ParseResult(
+                source='feishu',  # 默认为飞书来源
                 share_link=share_link,
                 folder_name=folder_name,
                 extraction_code=extraction_code,
                 raw_content=content
             )
 
-        # 3. 无法识别
+        # 4. 完全无法识别
         logger.debug(f"Failed to parse message: {content[:50]}...")
         return None
 

@@ -85,6 +85,20 @@ class Settings:
         self.wxchat_download_delay = self._get_int_env('WXCHAT_DOWNLOAD_DELAY', default=5)
         self.wxchat_max_days = self._get_int_env('WXCHAT_MAX_DAYS', default=30)
 
+        # 外部SFTP配置 (可选)
+        self.wxchat_external_sftp_host = os.getenv('WXCHAT_EXTERNAL_SFTP_HOST', '')
+        self.wxchat_external_sftp_port = self._get_int_env('WXCHAT_EXTERNAL_SFTP_PORT', default=22)
+        self.wxchat_external_sftp_username = os.getenv('WXCHAT_EXTERNAL_SFTP_USERNAME', '')
+        self.wxchat_external_sftp_password = os.getenv('WXCHAT_EXTERNAL_SFTP_PASSWORD', '')
+        self.wxchat_external_sftp_folder = os.getenv('WXCHAT_EXTERNAL_SFTP_FOLDER', '')
+
+        # 排除的公众号名称列表
+        exclude_accounts_str = os.getenv('WXCHAT_EXTERNAL_EXCLUDE_ACCOUNTS', '')
+        self.wxchat_external_exclude_accounts = [
+            account.strip() for account in exclude_accounts_str.split(',')
+            if account.strip()
+        ] if exclude_accounts_str else []
+
         # 验证关键配置
         self._validate_config()
 

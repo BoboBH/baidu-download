@@ -1,7 +1,7 @@
 import pysftp
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 from src.config.settings import Settings
 from src.utils.logger import get_logger
 
@@ -10,14 +10,37 @@ logger = get_logger(__name__)
 class SFTPClient:
     """SFTP客户端，处理文件上传操作"""
 
-    def __init__(self):
-        """初始化客户端"""
-        self.settings = Settings()
-        self.host = self.settings.sftp_host
-        self.port = self.settings.sftp_port
-        self.username = self.settings.sftp_username
-        self.password = self.settings.sftp_password
-        self.remote_path = self.settings.sftp_remote_path
+    def __init__(self, custom_config: Optional[Dict] = None):
+        """
+        初始化客户端
+
+        Args:
+            custom_config: 自定义SFTP配置，包含:
+                         - host: SFTP主机
+                         - port: SFTP端口
+                         - username: 用户名
+                         - password: 密码
+                         - remote_path: 远程路径 (可选)
+                         如果为None，使用默认配置
+        """
+        if custom_config:
+            # 使用自定义配置
+            self.host = custom_config.get('host')
+            self.port = custom_config.get('port', 22)
+            self.username = custom_config.get('username')
+            self.password = custom_config.get('password')
+            self.remote_path = custom_config.get('remote_path', '')
+            self.use_custom_config = True
+        else:
+            # 使用默认配置
+            self.settings = Settings()
+            self.host = self.settings.sftp_host
+            self.port = self.settings.sftp_port
+            self.username = self.settings.sftp_username
+            self.password = self.settings.sftp_password
+            self.remote_path = self.settings.sftp_remote_path
+            self.use_custom_config = False
+
         self.sftp: Optional[pysftp.Connection] = None
 
         logger.info(f"SFTPClient initialized for {self.host}:{self.port}")
@@ -30,11 +53,16 @@ class SFTPClient:
             是否连接成功
         """
         try:
+            # 创建CnOpts并禁用主机密钥检查（适用于内部可信SFTP服务器）
+            cnopts = pysftp.CnOpts()
+            cnopts.hostkeys = None
+
             self.sftp = pysftp.Connection(
                 host=self.host,
                 port=self.port,
                 username=self.username,
-                password=self.password
+                password=self.password,
+                cnopts=cnopts
             )
 
             logger.info(f"Connected to SFTP server: {self.host}:{self.port}")

@@ -12,7 +12,7 @@ PyInstaller配置文件 - 百度网盘PDF文件自动传输系统
   - 所有项目依赖项: pip install -r requirements.txt
 
 作者: baidu-download team
-版本: 1.2.3
+版本: 1.4.2
 """
 
 import os
@@ -41,8 +41,23 @@ datas = [
     # 微信文章处理数据库脚本
     (base_path / 'database' / 'wxchat_tables.sql', 'database'),
 
+    # 数据库迁移脚本（包含所有迁移文件）
+    (base_path / 'database' / 'migrations' / 'migrate_add_source_field.sql', 'database/migrations'),
+    (base_path / 'database' / 'migrations' / 'migrate_rename_wxchat_tables.sql', 'database/migrations'),
+
     # 百度网盘CLI工具 (如果存在)
     (base_path / 'BaiduPCS-Go.exe', '.'),
+
+    # 百度网盘cookies文件 (重要！用于百度网盘登录认证)
+    (base_path / 'baidu-cookies.txt', '.'),
+
+    # Playwright驱动文件
+    (base_path / 'venv/Lib/site-packages/playwright', 'playwright'),
+
+    # Playwright浏览器文件（重要！这会让exe增加约300MB）
+    # 使用最新版本的Chromium和FFmpeg以确保最佳性能和兼容性
+    (r'C:\Users\bobo\AppData\Local\ms-playwright\chromium-1223', r'ms-playwright\chromium-1223'),
+    (r'C:\Users\bobo\AppData\Local\ms-playwright\ffmpeg-1011', r'ms-playwright\ffmpeg-1011'),
 ]
 
 # 注意: PyInstaller会自动包含所有被导入的Python模块
@@ -63,6 +78,9 @@ hidden_imports = [
     'asyncio',
     'playwright',
     'playwright.sync_api',
+
+    # PDF生成依赖 (仅使用Playwright)
+    # 移除了reportlab和PIL依赖，只使用playwright
 
     # 项目模块 (确保所有src模块都被包含)
     'src.config.settings',
@@ -101,12 +119,12 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         # 排除不需要的标准库模块以减小文件大小
+        # 注意：不能排除PIL，因为reportlab需要它
         'tkinter',
         'matplotlib',
         'numpy',
         'pandas',
         'scipy',
-        'PIL',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

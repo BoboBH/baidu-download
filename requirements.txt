@@ -8,3 +8,9 @@ requests>=2.28.0
 
 # SFTP client dependency (pysftp is a wrapper around paramiko)
 pysftp>=0.2.9
+
+# Security dependencies (locked for Python 3.8 compatibility)
+cryptography==41.0.7  # Required for Python 3.8 compatibility
+
+# WeChat article PDF generation dependencies
+playwright>=1.40.0  # PDF generation (only solution)

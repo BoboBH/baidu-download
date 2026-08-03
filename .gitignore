@@ -31,13 +31,40 @@ env/
 *.swp
 *.swo
 *~
-
+.release/
 # Project specific
-.env
-baidu-cookies.txt
 logs/
 temp/
 *.log
+
+# Sensitive files (cookies, env configs)
+.env
+baidu-cookies.txt
+*.cookies
+deployment/baidu-cookies.txt
+release/.env
+release/baidu-cookies.txt
+test/fixtures/baidu-cookies.txt
+
+# Temporary files and build artifacts
+*.zip
+*.exe
+!release/*.exe
+!release/*.zip
+=10.0.0
+
+# PDF and media files (test artifacts)
+*.pdf
+wechat_*.pdf
+
+# Old release directories
+release_clean/
+release_final/
+release_package/
+release-old-*/
+
+# Database migrations (keep structure, ignore temp data)
+database/migrations/*.tmp
 
 # Test
 .pytest_cache/

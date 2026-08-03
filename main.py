@@ -16,6 +16,49 @@ from src.wxchat.processor import WeChatAccountSync, WeChatArticleProcessor
 
 logger = get_logger(__name__)
 
+def ensure_playwright_browsers():
+    """确保Playwright浏览器已安装"""
+    try:
+        import os
+        from playwright.sync_api import sync_playwright
+
+        logger.info("检查Playwright浏览器...")
+
+        # 检查是否在PyInstaller环境中运行
+        if getattr(sys, 'frozen', False):
+            # 在PyInstaller打包的exe中运行
+            logger.info("检测到PyInstaller环境，配置浏览器路径...")
+
+            # 设置PLAYWRIGHT_BROWSERS_PATH指向系统浏览器安装路径
+            # 这样Playwright可以找到系统安装的浏览器
+            system_browsers_path = os.path.join(os.path.expanduser('~'), 'AppData', 'Local', 'ms-playwright')
+            os.environ['PLAYWRIGHT_BROWSERS_PATH'] = system_browsers_path
+            logger.info(f"设置浏览器路径: {system_browsers_path}")
+            logger.info(f"浏览器目录存在: {os.path.exists(system_browsers_path)}")
+
+        # 尝试启动浏览器来检查是否已安装
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                browser.close()
+            logger.info("Playwright浏览器已就绪")
+            return True
+        except Exception as e:
+            if "Executable doesn't exist" in str(e) or "playwright install" in str(e):
+                logger.warning("Playwright浏览器未找到，请先安装:")
+                logger.error("运行命令: playwright install chromium")
+                return False
+            else:
+                logger.error(f"Playwright检查失败: {e}")
+                return False
+
+    except ImportError:
+        logger.error("Playwright未安装，请先安装: pip install playwright")
+        return False
+    except Exception as e:
+        logger.error(f"Playwright检查异常: {e}")
+        return False
+
 def parse_arguments() -> argparse.Namespace:
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
@@ -203,6 +246,12 @@ def main() -> int:
         if args.wxchat or args.wxchat_sync_accounts:
             logger.info("微信模式：开始处理微信公众号功能...")
 
+            # 确保Playwright浏览器已安装（重要！）
+            if not ensure_playwright_browsers():
+                logger.error("Playwright浏览器未就绪，无法处理微信文章")
+                logger.error("请手动运行: pip install playwright && playwright install chromium")
+                return 1
+
             # 仅验证微信数据库配置（不需要检查WXCHAT_ENABLED开关）
             if not settings.wxchat_wewe_db_host or not settings.wxchat_wewe_db_name:
                 logger.error("WXCHAT_WEWE_DB_HOST and WXCHAT_WEWE_DB_NAME must be set in .env file")
@@ -238,6 +287,12 @@ def main() -> int:
                     return 1
 
                 try:
+                    # 先同步账号信息，确保账号表是最新的
+                    logger.info("同步微信账号信息...")
+                    account_sync = WeChatAccountSync(settings)
+                    synced_count = account_sync.sync_accounts()
+                    logger.info(f"账号同步完成，同步了 {synced_count} 个账号")
+
                     processor = WeChatArticleProcessor(settings)
                     result = processor.process_articles(days=days)
 

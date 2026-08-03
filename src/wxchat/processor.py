@@ -135,7 +135,7 @@ class WeChatAccountSync:
 
                         # 使用UPSERT语法（MySQL 8.0+）
                         test_cursor.execute("""
-                            INSERT INTO wx_account (account_id, account_name, app_id)
+                            INSERT INTO new_wx_account (account_id, account_name, app_id)
                             VALUES (%s, %s, %s)
                             ON DUPLICATE KEY UPDATE
                                 account_name = VALUES(account_name),
@@ -173,7 +173,7 @@ class PDFGenerator:
 
     def generate_pdf(self, article_id: str, output_path: str) -> bool:
         """
-        生成PDF文件
+        生成PDF文件 - 使用Playwright生成真正的PDF
 
         Args:
             article_id: 文章ID
@@ -182,186 +182,143 @@ class PDFGenerator:
         Returns:
             是否生成成功
         """
-        # 首先尝试使用requests获取真实内容
+        url = f"{self.base_url}{article_id}"
+        logger.info(f"使用Playwright生成PDF: {url}")
+
+        # 使用Playwright生成PDF
+        if sync_playwright and self._generate_pdf_with_playwright(url, output_path):
+            return True
+
+        # Playwright失败，记录错误并返回False
+        logger.error("Playwright PDF生成失败，无法生成PDF文件")
+        return False
+
+    def _generate_pdf_with_playwright(self, url: str, output_path: str) -> bool:
+        """
+        使用Playwright生成完美的PDF
+
+        Args:
+            url: 微信文章URL
+            output_path: PDF输出路径
+
+        Returns:
+            是否生成成功
+        """
         try:
-            import requests
-            import os
-            from datetime import datetime
+            with sync_playwright() as p:
+                # 启动Chromium浏览器
+                try:
+                    browser = p.chromium.launch(headless=True)
+                except Exception as browser_error:
+                    logger.error(f"Chromium浏览器启动失败: {browser_error}")
+                    logger.error("请确保Playwright浏览器已安装: playwright install chromium")
+                    return False
 
-            url = f"{self.base_url}{article_id}"
-            logger.info(f"正在获取微信文章内容: {url}")
+                page = browser.new_page()
 
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
+                logger.info(f"访问微信文章页面: {url}")
 
-            # 禁用代理，避免代理连接错误
-            proxies = {
-                'http': None,
-                'https': None,
-            }
+                # 访问文章页面
+                try:
+                    page.goto(url, wait_until='networkidle', timeout=self.timeout)
+                except Exception as goto_error:
+                    logger.error(f"访问页面失败: {goto_error}")
+                    browser.close()
+                    return False
 
-            response = requests.get(url, headers=headers, proxies=proxies, timeout=self.config.wxchat_pdf_timeout)
+                # 改进的图片加载等待逻辑 - 简化可靠版本
+                logger.info(f"等待页面内容和图片加载...")
 
-            if response.status_code == 200:
-                html_content = response.content.decode('utf-8', errors='ignore')
+                # 1. 先等待主要内容区域出现
+                try:
+                    page.wait_for_selector('div.rich_media_content', timeout=10000)
+                    logger.info("主要内容区域已加载")
+                except:
+                    logger.warning("未找到主要内容区域选择器，继续等待...")
 
-                # 生成真实PDF内容
-                real_pdf_content = self._generate_comprehensive_pdf(article_id, url, html_content)
+                # 2. 简单但可靠的滚动方法
+                logger.info("开始滚动页面触发图片加载...")
 
-                with open(output_path, 'wb') as f:
-                    f.write(real_pdf_content.encode('utf-8'))
+                # 获取页面高度并分步滚动
+                scroll_height = page.evaluate("document.documentElement.scrollHeight")
+                viewport_height = page.evaluate("window.innerHeight")
+                steps = max(5, (scroll_height // viewport_height) + 2)  # 至少5步
 
+                for i in range(steps):
+                    # 计算滚动位置
+                    scroll_position = (scroll_height * i) // steps
+                    page.evaluate(f"window.scrollTo(0, {scroll_position})")
+                    logger.info(f"滚动进度: {i+1}/{steps} (位置: {scroll_position}px)")
+                    page.wait_for_timeout(1000)  # 每步等待1秒
+
+                # 滚动回顶部
+                page.evaluate("window.scrollTo(0, 0)")
+                page.wait_for_timeout(2000)  # 回到顶部后等待2秒
+
+                # 3. 等待网络空闲
+                logger.info("等待网络请求完成...")
+                try:
+                    page.wait_for_load_state('networkidle', timeout=15000)
+                    logger.info("网络已空闲")
+                except:
+                    logger.warning("网络未完全空闲，但继续处理...")
+
+                # 4. 额外等待图片渲染
+                logger.info(f"额外等待图片渲染 ({self.image_wait_time}秒)...")
+                page.wait_for_timeout(self.image_wait_time * 1000)
+
+                # 5. 检查图片加载状态
+                try:
+                    image_count = page.evaluate("""
+                        () => {
+                            const images = document.querySelectorAll('img');
+                            let loadedCount = 0;
+                            let errorCount = 0;
+
+                            images.forEach(img => {
+                                if (img.complete && img.naturalHeight !== 0) {
+                                    loadedCount++;
+                                } else if (img.naturalHeight === 0 && !img.complete) {
+                                    errorCount++;
+                                }
+                            });
+
+                            return {
+                                total: images.length,
+                                loaded: loadedCount,
+                                error: errorCount
+                            };
+                        }
+                    """)
+                    logger.info(f"图片状态: 总数={image_count['total']}, 已加载={image_count['loaded']}, 失败={image_count['error']}")
+                except Exception as e:
+                    logger.warning(f"无法检查图片状态: {e}")
+
+                # 生成真正的PDF
+                try:
+                    page.pdf(
+                        path=output_path,
+                        format='A4',
+                        print_background=True,
+                        margin={'top': '1cm', 'right': '1cm', 'bottom': '1cm', 'left': '1cm'}
+                    )
+                except Exception as pdf_error:
+                    logger.error(f"PDF生成失败: {pdf_error}")
+                    browser.close()
+                    return False
+
+                browser.close()
+
+                # 检查生成的文件
+                import os
                 file_size = os.path.getsize(output_path)
-                logger.info(f"PDF生成成功，文件大小: {file_size} bytes ({file_size/1024:.2f} KB)")
+                logger.info(f"Playwright PDF生成成功，文件大小: {file_size} bytes ({file_size/1024:.2f} KB)")
+
                 return file_size > 10000  # 至少10KB才算成功
-            else:
-                logger.warning(f"获取文章失败，状态码: {response.status_code}，使用备用方案")
 
-        except ImportError:
-            logger.warning("requests模块未安装，使用备用方案")
         except Exception as e:
-            logger.warning(f"获取文章内容失败: {e}，使用备用方案")
-
-        # 备用方案：生成高质量PDF
-        return self._generate_fallback_pdf(article_id, output_path)
-
-    def _generate_comprehensive_pdf(self, article_id: str, url: str, html_content: str) -> str:
-        """生成全面的PDF内容"""
-        from datetime import datetime
-
-        # 提取文章标题
-        title = "Unknown Title"
-        if '<meta property="og:title"' in html_content:
-            start = html_content.find('<meta property="og:title"')
-            section = html_content[start:start+500]
-            if 'content=' in section:
-                content_start = section.find('content=') + 9
-                content_end = section.find('"', content_start)
-                if content_end > content_start:
-                    title = section[content_start:content_end]
-
-        return f'''WECHAT ARTICLE COMPLETE PDF
-==================================================================================================
-ARTICLE INFORMATION
-==================================================================================================
-Article ID: {article_id}
-Article URL: {url}
-Title: {title}
-Generation Time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-Content Source: WeChat Official Server (mp.weixin.qq.com)
-Original HTML Size: {len(html_content)} bytes
-
-==================================================================================================
-COMPLETE HTML CONTENT (Preserved for Reference)
-==================================================================================================
-
-HTML HEAD SECTION:
-{html_content[:2000] if len(html_content) > 2000 else html_content}
-
-HTML BODY SECTION (First 10000 chars):
-{html_content[2000:12000] if len(html_content) > 2000 else html_content[:10000]}
-
-MAIN CONTENT CONTINUATION (Next 10000 chars):
-{html_content[12000:22000] if len(html_content) > 12000 else "Content exhausted"}
-
-ARTICLE BODY TEXT (Next 10000 chars):
-{html_content[22000:32000] if len(html_content) > 22000 else "Content exhausted"}
-
-REMAINING CONTENT (Final 10000 chars):
-{html_content[32000:42000] if len(html_content) > 32000 else "Content exhausted"}
-
-TAIL SECTION (Final chars):
-{html_content[42000:] if len(html_content) > 42000 else "End of content"}
-
-==================================================================================================
-PDF GENERATION DETAILS
-==================================================================================================
-- Generation Method: Direct HTML Content Extraction
-- Content Preservation: Full HTML captured
-- Encoding: UTF-8 with error handling
-- Quality: Original content fidelity maintained
-- Size: Realistic PDF size from actual content
-- Source Authenticity: WeChat Official Platform
-
-==================================================================================================
-This PDF contains the complete HTML content from the WeChat article.
-The content has been directly fetched and preserved in PDF format for archival purposes.
-==================================================================================================
-'''
-
-    def _generate_fallback_pdf(self, article_id: str, output_path: str) -> bool:
-        """生成备用高质量PDF"""
-        import os
-        from datetime import datetime
-
-        fallback_content = f'''WECHAT ARTICLE ARCHIVAL PDF
-==================================================================================================
-DOCUMENT METADATA
-==================================================================================================
-Article ID: {article_id}
-Article URL: {self.base_url}{article_id}
-Generation Time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-Document Type: WeChat Article Archival PDF
-System: Automatic WeChat Article Processing System
-
-==================================================================================================
-ARTICLE DETAILS
-==================================================================================================
-This PDF represents a WeChat article that could not be accessed directly
-due to network connectivity restrictions.
-
-EXPECTED ARTICLE STRUCTURE:
-- Professional Heading with Article Title
-- Author Information (Official Account Name)
-- Publication Timestamp
-- Rich Text Content with Embedded Media
-- High-resolution Images
-- Professional Layout and Formatting
-
-TECHNICAL SPECIFICATIONS:
-- Platform: WeChat Official Account (mp.weixin.qq.com)
-- URL Format: https://mp.weixin.qq.com/s/{{article_id}}
-- Content Type: HTML5 with Embedded CSS
-- Media Types: JPEG, PNG, GIF embedded images
-- Character Encoding: UTF-8
-- Rendering: WebKit-based browser engine
-
-ARCHIVAL INFORMATION:
-- Original Article URL: {self.base_url}{article_id}
-- Capture Method: Systematic Archival Process
-- Processing Date: {datetime.now().strftime("%Y-%m-%d")}
-- Archive Format: PDF (Portable Document Format)
-- Compression: Standard PDF compression
-- Metadata: Preserved for future reference
-
-==================================================================================================
-SYSTEM INFORMATION
-==================================================================================================
-Processing System: Automatic WeChat Article PDF Generator
-Database: weme_rss (source) + test (tracking)
-Storage: SFTP Server with YYMM Directory Organization
-File Naming: AccountName_ArticleTitle.pdf
-Status: Operational with Network Limitations
-
-==================================================================================================
-This archival PDF serves as a placeholder until network connectivity
-is restored and full article content can be retrieved.
-The system maintains article tracking and processing records regardless
-of temporary network limitations.
-
-==================================================================================================
-END OF ARCHIVAL DOCUMENT
-Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-System Status: Fully Functional
-'''
-
-        with open(output_path, 'wb') as f:
-            f.write(fallback_content.encode('utf-8'))
-
-        file_size = os.path.getsize(output_path)
-        logger.info(f"备用PDF生成，文件大小: {file_size} bytes ({file_size/1024:.2f} KB)")
-        return file_size > 8000  # 至少8KB
+            logger.error(f"Playwright执行失败: {e}")
+            return False
 
 class WeChatArticleProcessor:
     """微信公众号文章处理器"""
@@ -462,7 +419,7 @@ class WeChatArticleProcessor:
         try:
             with DatabaseConnection(self.config, use_wewe_db=True) as conn:
                 with conn.cursor() as cursor:
-                    # 假设wewe_rss数据库中有article表
+                    # 查询wewe_rss数据库中的文章表
                     cursor.execute("""
                         SELECT
                             id,
@@ -499,64 +456,98 @@ class WeChatArticleProcessor:
         publish_time = article.get('publish_time')
         publish_date = datetime.fromtimestamp(publish_time).strftime('%Y-%m-%d %H:%M:%S') if publish_time else None
 
-        logger.info(f"处理文章: {title} ({article_id})")
+        logger.info(f"📄 开始处理文章: {title} ({article_id})")
+        logger.info(f"   账号ID: {account_id}, 发布时间: {publish_date}")
 
         pdf_url = None
         error_message = None
 
         try:
             # 创建临时文件
+            logger.info(f"   创建临时PDF文件...")
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
                 temp_pdf_path = tmp_file.name
 
             # 生成PDF
+            logger.info(f"   开始生成PDF: {article_id}")
             if not self.pdf_generator.generate_pdf(article_id, temp_pdf_path):
                 error_message = "PDF生成失败"
-                logger.error(f"PDF生成失败: {article_id}")
+                logger.error(f"❌ PDF生成失败: {article_id}")
                 self._update_article_status(article_id, account_id, title, publish_date, pdf_url, error_message)
                 return False
 
+            logger.info(f"✅ PDF生成完成: {temp_pdf_path}")
+
             # 上传到SFTP
+            logger.info(f"   准备上传PDF到SFTP服务器...")
             try:
                 with SFTPClient() as sftp:
-                    # 生成YYMM格式的目录
+                    # 生成YYYYMM格式的目录
                     publish_date_obj = datetime.strptime(publish_date, '%Y-%m-%d %H:%M:%S')
-                    yymm = publish_date_obj.strftime('%y%m')
+                    yymm = publish_date_obj.strftime('%Y%m')
+                    logger.info(f"   目标目录: {yymm}")
 
                     # 获取账号名称用于文件命名
                     account_name = self._get_account_name(account_id)
+                    logger.info(f"   账号名称: {account_name}")
 
                     # 生成文件名：公众号名称_文章标题.pdf
                     # 清理文件名中的非法字符
                     safe_account_name = self._sanitize_filename(account_name)
                     safe_title = self._sanitize_filename(title)
                     remote_filename = f"{safe_account_name}_{safe_title}.pdf"
+                    logger.info(f"   文件名: {remote_filename}")
 
-                    # 生成远程路径：wxchat_sftp_remote_path/YYMM/文件名.pdf
+                    # 生成远程路径：wxchat_sftp_remote_path/YYYYMM/文件名.pdf
                     remote_dir = f"{self.config.wxchat_sftp_remote_path}/{yymm}"
                     remote_path = f"{remote_dir}/{remote_filename}"
+                    logger.info(f"   远程路径: {remote_path}")
 
-                    # 上传文件
-                    if sftp.upload_file(temp_pdf_path, remote_path):
+                    # 上传文件到主SFTP
+                    logger.info(f"   开始上传到主SFTP服务器...")
+                    main_sftp_success = sftp.upload_file(temp_pdf_path, remote_path)
+                    if main_sftp_success:
                         # 生成PDF URL
                         pdf_url = f"{remote_dir}/{remote_filename}"
-                        logger.info(f"PDF上传成功: {pdf_url}")
+                        logger.info(f"✅ 主SFTP上传成功: {pdf_url}")
+
+                        # 尝试上传到外部SFTP（如果配置了且不在排除列表中）
+                        logger.info(f"   尝试上传到外部SFTP...")
+                        external_sftp_success = self._upload_to_external_sftp(
+                            temp_pdf_path, safe_account_name, safe_title,
+                            yymm, account_name
+                        )
+
+                        # 检查两个SFTP上传是否都成功
+                        if not external_sftp_success:
+                            error_message = "外部SFTP上传失败"
+                            logger.error(f"⚠️  外部SFTP上传失败: {article_id}")
+                        else:
+                            logger.info(f"✅ 外部SFTP上传成功")
                     else:
-                        error_message = "SFTP上传失败"
-                        logger.error(f"SFTP上传失败: {article_id}")
+                        error_message = "主SFTP上传失败"
+                        logger.error(f"❌ 主SFTP上传失败: {article_id}")
 
             except Exception as e:
                 error_message = f"SFTP上传异常: {str(e)}"
-                logger.error(f"SFTP上传异常: {e}")
+                logger.error(f"❌ SFTP上传异常: {e}")
 
             # 清理临时文件
+            logger.info(f"   清理临时文件...")
             try:
                 os.unlink(temp_pdf_path)
+                logger.info(f"✅ 临时文件已清理: {temp_pdf_path}")
             except Exception as e:
-                logger.warning(f"清理临时文件失败: {e}")
+                logger.warning(f"⚠️  清理临时文件失败: {e}")
 
             # 更新处理状态
+            logger.info(f"   更新处理状态到数据库...")
             self._update_article_status(article_id, account_id, title, publish_date, pdf_url, error_message)
+
+            if error_message is None:
+                logger.info(f"🎉 文章处理完成: {title} ({article_id})")
+            else:
+                logger.error(f"❌ 文章处理失败: {title} - {error_message}")
 
             return error_message is None
 
@@ -581,7 +572,7 @@ class WeChatArticleProcessor:
                 with conn.cursor() as cursor:
                     cursor.execute("""
                         SELECT COUNT(*) as count
-                        FROM wx_article
+                        FROM new_wx_article
                         WHERE article_id = %s
                         AND processed_at IS NOT NULL
                     """, (article_id,))
@@ -613,7 +604,7 @@ class WeChatArticleProcessor:
                 with conn.cursor() as cursor:
                     # 使用UPSERT语法
                     cursor.execute("""
-                        INSERT INTO wx_article (
+                        INSERT INTO new_wx_article (
                             article_id,
                             account_id,
                             title,
@@ -662,7 +653,7 @@ class WeChatArticleProcessor:
             with DatabaseConnection(self.config, use_wewe_db=False) as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("""
-                        SELECT account_name FROM wx_account WHERE account_id = %s
+                        SELECT account_name FROM new_wx_account WHERE account_id = %s
                     """, (account_id,))
                     result = cursor.fetchone()
                     if result:
@@ -694,3 +685,57 @@ class WeChatArticleProcessor:
         if len(filename) > 100:
             filename = filename[:100]
         return filename.strip('.')
+
+    def _upload_to_external_sftp(self, local_pdf_path: str, safe_account_name: str,
+                                 safe_title: str, yymm: str, original_account_name: str) -> bool:
+        """
+        上传PDF到外部SFTP服务器
+
+        Args:
+            local_pdf_path: 本地PDF文件路径
+            safe_account_name: 安全的公众号名称（用于文件名）
+            safe_title: 安全的文章标题（用于文件名）
+            yymm: 年月格式（如：202407）
+            original_account_name: 原始公众号名称（用于排除检查）
+
+        Returns:
+            是否上传成功（排除的公众号视为成功）
+        """
+        # 检查是否配置了外部SFTP
+        if not self.config.wxchat_external_sftp_host:
+            logger.debug("外部SFTP未配置，跳过外部上传")
+            return True  # 未配置外部SFTP，不视为失败
+
+        # 检查公众号是否在排除列表中
+        if original_account_name in self.config.wxchat_external_exclude_accounts:
+            logger.info(f"公众号 '{original_account_name}' 在排除列表中，跳过外部SFTP上传")
+            return True  # 排除的公众号，不视为失败
+
+        try:
+            # 构建外部SFTP配置
+            external_config = {
+                'host': self.config.wxchat_external_sftp_host,
+                'port': self.config.wxchat_external_sftp_port,
+                'username': self.config.wxchat_external_sftp_username,
+                'password': self.config.wxchat_external_sftp_password,
+                'remote_path': self.config.wxchat_external_sftp_folder
+            }
+
+            # 生成外部SFTP的远程路径
+            external_remote_dir = f"{self.config.wxchat_external_sftp_folder}/{yymm}"
+            external_remote_path = f"{external_remote_dir}/{safe_account_name}_{safe_title}.pdf"
+
+            # 上传到外部SFTP
+            logger.info(f"开始上传到外部SFTP: {self.config.wxchat_external_sftp_host}")
+            with SFTPClient(custom_config=external_config) as external_sftp:
+                if external_sftp.upload_file(local_pdf_path, external_remote_path):
+                    logger.info(f"外部SFTP上传成功: {external_remote_path}")
+                    return True
+                else:
+                    logger.error(f"外部SFTP上传失败: {external_remote_path}")
+                    return False
+
+        except Exception as e:
+            # 外部SFTP上传失败应该返回False
+            logger.error(f"外部SFTP上传异常: {e}")
+            return False
