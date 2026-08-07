@@ -318,6 +318,67 @@ def main() -> int:
 
                     logger.info("=" * 60)
 
+                    # 发送报告到钉钉群
+                    try:
+                        from src.notification.dingtalk_notifier import DingtalkNotifier
+                        notifier = DingtalkNotifier(settings)
+
+                        # 构建报告消息
+                        report_title = "📊 微信文章处理报告"
+                        report_content = f"""## 微信文章处理完成报告
+
+### 📈 处理统计
+- **总计文章**: {result.total_articles} 篇
+- **✅ 成功处理**: {result.processed_articles} 篇
+- **❌ 失败文章**: {result.failed_articles} 篇
+- **⏭️ 跳过文章**: {result.skipped_articles} 篇
+
+### ⏱️ 处理时间
+"""
+
+                        if result.start_time and result.end_time:
+                            duration = (result.end_time - result.start_time).total_seconds()
+                            start_time_str = result.start_time.strftime('%Y-%m-%d %H:%M:%S')
+                            end_time_str = result.end_time.strftime('%Y-%m-%d %H:%M:%S')
+                            report_content += f"- **开始时间**: {start_time_str}\n"
+                            report_content += f"- **结束时间**: {end_time_str}\n"
+                            report_content += f"- **处理耗时**: {duration:.2f} 秒\n\n"
+
+                        # 添加错误信息（如果有）
+                        if result.errors:
+                            total_errors = len(result.errors)
+                            display_count = min(5, total_errors)
+                            report_content += f"### ⚠️ 错误信息 ({total_errors} 个)\n"
+                            for error in result.errors[:display_count]:
+                                report_content += f"- {error}\n"
+                            if total_errors > display_count:
+                                report_content += f"- ... 还有 {total_errors - display_count} 个错误未显示\n"
+                            report_content += "\n"
+
+                        # 添加状态总结
+                        if result.failed_articles == 0:
+                            report_content += "### 🎉 处理完成\n所有文章处理成功，无失败！"
+                        else:
+                            success_rate = (result.processed_articles / result.total_articles * 100) if result.total_articles > 0 else 0
+                            report_content += f"### 📋 处理完成\n成功率: {success_rate:.1f}%"
+
+                        # 判断是否需要发送报告：有新增文章或有失败文章时才发送
+                        should_send_report = result.processed_articles > 0 or result.failed_articles > 0
+
+                        if should_send_report:
+                            logger.info("正在发送报告到钉钉群...")
+                            if notifier.send_notification(report_title, report_content):
+                                logger.info("✅ 报告已成功发送到钉钉群")
+                            else:
+                                logger.warning("⚠️ 钉钉报告发送失败")
+                        else:
+                            logger.info("ℹ️ 没有新增文章也没有失败文章，跳过报告发送")
+
+                    except ImportError:
+                        logger.warning("钉钉通知模块未导入，跳过报告发送")
+                    except Exception as e:
+                        logger.error(f"发送钉钉报告时出错: {e}")
+
                     return 0 if result.failed_articles == 0 else 1
 
                 except Exception as e:

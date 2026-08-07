@@ -66,6 +66,15 @@ class DingtalkNotifier:
                 "Content-Type": "application/json"
             }
 
+            # 添加详细日志
+            logger.info("=" * 60)
+            logger.info(f"📤 准备发送钉钉消息...")
+            logger.info(f"🔗 Webhook URL: {self.webhook[:60]}...")
+            logger.info(f"📝 消息标题: {title}")
+            logger.info(f"📄 消息内容长度: {len(content)} 字符")
+            logger.info(f"⏰ 超时设置: {self.TIMEOUT} 秒")
+            logger.info("-" * 60)
+
             response = requests.post(
                 self.webhook,
                 json=data,
@@ -73,18 +82,34 @@ class DingtalkNotifier:
                 timeout=self.TIMEOUT
             )
 
+            # 详细的响应日志
+            logger.info(f"📡 HTTP 状态码: {response.status_code}")
+            logger.info(f"📦 响应内容: {response.text[:200]}...")
+
             if response.status_code == 200:
                 result = response.json()
+                logger.info(f"🔍 钉钉响应码: {result.get('errcode')}")
+                logger.info(f"🔍 钉响应消息: {result.get('errmsg')}")
+
                 if result.get("errcode") == 0:
-                    logger.info(f"Successfully sent DingTalk notification: {title}")
+                    logger.info(f"✅ 成功发送钉钉通知: {title}")
+                    logger.info("=" * 60)
                     return True
                 else:
-                    logger.error(f"DingTalk API error: errcode={result.get('errcode')}, errmsg={result.get('errmsg')}")
+                    logger.error(f"❌ 钉钉API错误: errcode={result.get('errcode')}, errmsg={result.get('errmsg')}")
+                    logger.error("💡 可能原因:")
+                    if result.get('errcode') == 310000:
+                        logger.error("   - 关键词验证失败：消息标题不包含配置的关键词")
+                        logger.error("   - 解决方案：在钉钉机器人设置中添加关键词 'feedback' 或关闭关键词验证")
+                    logger.error("=" * 60)
                     return False
             else:
-                logger.error(f"HTTP error: status={response.status_code}")
+                logger.error(f"❌ HTTP错误: status={response.status_code}")
+                logger.error(f"📦 响应内容: {response.text}")
+                logger.error("=" * 60)
                 return False
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to send DingTalk notification: {e}")
+            logger.error(f"❌ 网络请求失败: {e}")
+            logger.error("=" * 60)
             return False

@@ -12,7 +12,7 @@ PyInstaller配置文件 - 百度网盘PDF文件自动传输系统
   - 所有项目依赖项: pip install -r requirements.txt
 
 作者: baidu-download team
-版本: 1.4.2
+版本: 1.4.4
 """
 
 import os
@@ -46,7 +46,7 @@ datas = [
     (base_path / 'database' / 'migrations' / 'migrate_rename_wxchat_tables.sql', 'database/migrations'),
 
     # 百度网盘CLI工具 (如果存在)
-    (base_path / 'BaiduPCS-Go.exe', '.'),
+    # (base_path / 'BaiduPCS-Go.exe', '.'),  # 暂时注释，文件不存在
 
     # 百度网盘cookies文件 (重要！用于百度网盘登录认证)
     (base_path / 'baidu-cookies.txt', '.'),

@@ -23,6 +23,15 @@ class MessageHandler(CallbackHandler):
         self.parser = MessageParser()
         self.settings = settings or Settings()
 
+        # 初始化消息发送功能（用于反馈）
+        if self.settings.dingtalk_webhook:
+            from src.notification.dingtalk_notifier import DingtalkNotifier
+            self.notifier = DingtalkNotifier(self.settings)
+            logger.info("消息反馈功能已启用")
+        else:
+            self.notifier = None
+            logger.warning("未配置Webhook，消息反馈功能不可用")
+
         # 消息统计
         self.total_received = 0
         self.total_processed = 0
@@ -32,6 +41,78 @@ class MessageHandler(CallbackHandler):
 
         logger.info("MessageHandler initialized successfully")
         logger.info("消息要求：必须@机器人才会处理")
+
+    async def send_feedback(self, conversation_title: str, message_content: str,
+                           is_valid: bool, details: str = ""):
+        """
+        发送处理反馈到钉钉群
+
+        Args:
+            conversation_title: 群聊名称
+            message_content: 原始消息内容
+            is_valid: 消息是否有效
+            details: 详细信息（成功时显示记录内容，失败时显示错误原因）
+        """
+        if not self.notifier:
+            logger.warning("⚠️  未配置通知器，无法发送反馈消息")
+            return
+
+        try:
+            logger.info("=" * 60)
+            logger.info(f"🎯 准备发送反馈消息...")
+            logger.info(f"📱 群聊: {conversation_title}")
+            logger.info(f"💬 原消息: {message_content[:50]}...")
+            logger.info(f"✅ 有效: {is_valid}")
+            logger.info(f"📋 详情: {details}")
+
+            if is_valid:
+                title = "feedback: 收到有效百度网盘链接"
+                content = f"""## 消息处理成功
+
+**群聊**: {conversation_title}
+**消息**: {message_content[:50]}...
+**状态**: 已记录到数据库，等待处理
+
+{details}
+"""
+            else:
+                title = "feedback: 消息格式无效"
+                content = f"""## 消息处理失败
+
+**群聊**: {conversation_title}
+**消息**: {message_content[:50]}...
+**原因**: {details}
+
+请检查消息格式，正确格式：`260723：https://pan.baidu.com/s/xxx`
+"""
+
+            logger.info(f"📝 反馈标题: {title}")
+            logger.info(f"📄 反馈内容: {content[:100]}...")
+
+            # 异步发送，不阻塞主流程（兼容Python 3.8）
+            loop = asyncio.get_running_loop()
+            logger.info(f"🔄 开始异步发送...")
+            result = await loop.run_in_executor(
+                None,
+                self.notifier.send_notification,
+                title,
+                content
+            )
+
+            if result:
+                logger.info(f"✅ 反馈消息发送成功: {title}")
+            else:
+                logger.error(f"❌ 反馈消息发送失败: {title}")
+                logger.error("💡 请检查:")
+                logger.error("   1. 钉钉机器人关键词设置")
+                logger.error("   2. Webhook URL 配置")
+                logger.error("   3. 网络连接状态")
+
+            logger.info("=" * 60)
+
+        except Exception as e:
+            logger.error(f"❌ 发送反馈消息异常: {e}")
+            logger.error("=" * 60)
 
     async def process(self, callback_message: CallbackMessage):
         """处理钉钉消息 - 快速响应避免丢消息"""
@@ -76,6 +157,14 @@ class MessageHandler(CallbackHandler):
             if not parse_result:
                 logger.info(f"⚠️  消息不包含百度链接，跳过: {message_content[:50]}...")
                 self.total_skipped += 1
+
+                # 发送无效消息反馈
+                await self.send_feedback(
+                    chatbot_message.conversation_title,
+                    message_content,
+                    is_valid=False,
+                    details="消息不包含百度网盘链接或格式错误"
+                )
                 return AckMessage.STATUS_OK, "OK"
 
             # 检查是否为钉钉消息
@@ -124,6 +213,14 @@ class MessageHandler(CallbackHandler):
 
             logger.info(f"✅ 消息已存储: {parse_result.folder_name} (ID: {log_id})")
             logger.info(f"📊 统计: 收到={self.total_received}, @机器={self.total_at_bot}, 处理={self.total_processed}, 跳过={self.total_skipped}, 错误={self.total_errors}")
+
+            # 发送成功消息反馈
+            await self.send_feedback(
+                chatbot_message.conversation_title,
+                message_content,
+                is_valid=True,
+                details=f"已记录: {parse_result.folder_name}"
+            )
 
             return AckMessage.STATUS_OK, "OK"
 

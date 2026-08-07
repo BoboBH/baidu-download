@@ -15,6 +15,8 @@
 - ✅ **自动存储**：解析成功后自动存储到数据库
 - ✅ **去重机制**：基于消息哈希的智能去重
 - ✅ **错误处理**：完善的异常处理和日志记录
+- ✅ **智能报告**：只在有新增文章或失败文章时发送报告到钉钉群
+- ✅ **实时反馈**：收到消息后自动发送处理结果反馈到群聊
 
 ### 消息格式支持
 
@@ -24,6 +26,16 @@
 - 提取码：6位数字（YYDDMM格式）
 - 分隔符：中文冒号`：`或英文冒号`:`
 - 百度网盘链接：标准 pan.baidu.com/s/ 格式
+
+### 微信文章处理报告
+
+微信文章处理完成后，系统会自动发送详细的处理报告到钉钉群。
+
+**报告内容包括：**
+- 📊 处理统计（总计、成功、失败、跳过）
+- ⏱️ 处理时间（开始时间、结束时间、耗时）
+- ⚠️ 错误信息（如果有失败的文章）
+- 📋 处理结果总结和成功率
 
 ## 🚀 快速开始
 
@@ -73,6 +85,7 @@ python src/feishu/dingtalk_group_client.py
 |--------|------|------|--------|
 | `DINGTALK_APP_KEY` | ✅ | 钉钉应用的 AppKey | `dingcu3gdk9wnifpzm16` |
 | `DINGTALK_APP_SECRET` | ✅ | 钉钉应用的 AppSecret | `yn0xVpBupQxaJoBxEKuxck3k5W7gRg6gFzEail7aXFvh09KzakMoVC9m1VTtqmE5` |
+| `DINGTALK_WEBHOOK` | ⭐ | 钉钉机器人Webhook地址（用于发送报告） | `https://oapi.dingtalk.com/robot/send?access_token=your_token` |
 | `DB_HOST` | ✅ | 数据库主机地址 | `localhost` |
 | `DB_PORT` | ✅ | 数据库端口 | `3306` |
 | `DB_USER` | ✅ | 数据库用户名 | `root` |
@@ -132,6 +145,124 @@ python src/feishu/dingtalk_group_client.py
 ## 📊 数据库结构
 
 ### message_process_log 表
+
+```sql
+CREATE TABLE message_process_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    message_hash VARCHAR(64) NOT NULL UNIQUE COMMENT '消息MD5哈希',
+    original_message TEXT COMMENT '原始消息内容',
+    share_link VARCHAR(500) COMMENT '提取的网盘链接',
+    folder_name VARCHAR(255) COMMENT '提取的目录名',
+    extraction_code VARCHAR(20) COMMENT '提取码',
+    source ENUM('feishu', 'dingtalk') DEFAULT 'feishu' COMMENT '消息来源',
+    process_status ENUM('pending', 'processing', 'success', 'failed', 'critical_error')
+        DEFAULT 'pending' COMMENT '处理状态',
+    error_message TEXT COMMENT '错误信息',
+    execution_summary_id INT COMMENT '关联执行摘要ID',
+    processing_time_ms INT COMMENT '处理耗时(毫秒)',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
+    
+    INDEX idx_message_hash (message_hash),
+    INDEX idx_source (source),
+    INDEX idx_process_status (process_status),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT='消息处理记录表（支持飞书和钉钉）';
+```
+
+## 📱 微信文章处理报告功能
+
+### 功能说明
+
+微信文章处理完成后，系统会自动通过钉钉机器人Webhook发送详细的处理报告到指定的钉钉群。这个功能可以帮助团队实时了解微信文章的处理情况。
+
+### 配置要求
+
+**必需配置：**
+```bash
+# 在 .env 文件中添加钉钉Webhook地址
+DINGTALK_WEBHOOK=https://oapi.dingtalk.com/robot/send?access_token=your_webhook_token_here
+```
+
+**获取钉钉Webhook：**
+1. 进入目标钉钉群
+2. 点击群设置 → 群机器人 → 添加机器人
+3. 选择"自定义机器人"
+4. 设置机器人名称和安全设置
+5. 复制Webhook地址到配置文件
+
+### 启动方式
+
+```bash
+# 处理微信文章并自动发送报告
+python main.py --wxchat --wxchat-days 7
+
+# 详细日志模式
+python main.py --wxchat --wxchat-days 7 --verbose
+```
+
+### 报告格式
+
+**发送的报告为Markdown格式，包含以下内容：**
+
+```markdown
+## 微信文章处理完成报告
+
+### 📈 处理统计
+- **总计文章**: 150 篇
+- **✅ 成功处理**: 145 篇
+- **❌ 失败文章**: 3 篇
+- **⏭️ 跳过文章**: 2 篇
+
+### ⏱️ 处理时间
+- **开始时间**: 2026-08-06 10:30:00
+- **结束时间**: 2026-08-06 10:35:30
+- **处理耗时**: 330.50 秒
+
+### ⚠️ 错误信息 (3 个)
+- PDF生成失败: article_id_12345
+- SFTP上传失败: article_id_67890
+- 外部SFTP连接超时: article_id_54321
+
+### 🎉 处理完成
+成功率: 96.7%
+```
+
+### 报告特点
+
+1. **智能发送**：只在有新增文章或有失败文章时才发送报告
+2. **详细信息**：包含完整的处理统计和错误信息
+3. **美观格式**：使用Markdown格式，钉钉群内渲染效果好
+4. **错误高亮**：清晰显示失败文章和错误原因
+5. **成功率统计**：便于评估处理质量和系统稳定性
+
+### 故障排除
+
+**报告未发送：**
+- 检查 `DINGTALK_WEBHOOK` 配置是否正确
+- 确认网络连接正常
+- 查看应用日志中的错误信息
+
+**报告格式错乱：**
+- 确认钉钉机器人支持Markdown格式
+- 检查特殊字符是否正确转义
+
+**重复报告：**
+- 确认没有重复启动处理任务
+- 检查是否有定时任务冲突
+
+### 安全建议
+
+1. **Webhook安全**：
+   - 使用关键词验证或IP限制
+   - 定期更换Webhook Token
+   - 不要在代码中硬编码Webhook地址
+
+2. **内容安全**：
+   - 报告中不包含敏感信息
+   - 错误信息经过适当过滤
+   - 避免泄露内部系统信息
 
 ```sql
 CREATE TABLE message_process_log (
