@@ -189,3 +189,19 @@ class MessageParser:
 
         # 计算MD5哈希作为唯一键
         return hashlib.md5(combined.encode('utf-8')).hexdigest()
+
+    def extract_pwd_from_url(self, url: str) -> Optional[str]:
+        """
+        从百度网盘URL中提取pwd参数作为提取码
+
+        Args:
+            url: 百度网盘分享链接
+
+        Returns:
+            提取码，如果URL中没有pwd参数则返回None
+        """
+        pwd_pattern = re.compile(r'[?&]pwd=([a-zA-Z0-9]+)')
+        match = pwd_pattern.search(url)
+        if match:
+            return match.group(1)
+        return None
