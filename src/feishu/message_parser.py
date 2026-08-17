@@ -84,7 +84,43 @@ class MessageParser:
             # 不是JSON格式，直接使用原始内容
             logger.debug("Using raw message content (not JSON)")
 
-        # 1. 尝试组合格式（同时有6位数字和链接，顺序不限）
+        # 1. NEW: Try quant format first (highest priority)
+        quant_match = self.QUANT_PATTERN.search(content)
+        if quant_match:
+            folder_name = quant_match.group(1)  # quant-2026-3
+            share_link = quant_match.group(2).strip()
+
+            # Validate URL was captured
+            if not share_link:
+                logger.warning(f"Quant format matched but no URL found: {content[:50]}...")
+                return None
+
+            # Optional: Validate month range (1-12)
+            month_part = folder_name.split('-')[-1]
+            try:
+                month = int(month_part)
+                if month < 1 or month > 12:
+                    logger.warning(f"Invalid month in folder name: {folder_name}")
+                    return None
+            except ValueError:
+                logger.warning(f"Invalid month format in folder name: {folder_name}")
+                return None
+
+            # Extract pwd from URL or use config default
+            extraction_code = self.extract_pwd_from_url(share_link) or self.settings.message_default_extraction_code
+
+            logger.info(f"Quant format parsed: {folder_name}")
+            logger.debug(f"Extraction code: {extraction_code}, Share link: {share_link}")
+
+            return ParseResult(
+                source=source,
+                share_link=share_link,
+                folder_name=folder_name,
+                extraction_code=extraction_code,
+                raw_content=content
+            )
+
+        # 2. 尝试组合格式（同时有6位数字和链接，顺序不限）
         combined_match = self.COMBINED_PATTERN.search(content)
         if combined_match:
             # COMBINED_PATTERN 有两种匹配形式，需要判断哪个组捕获了内容
@@ -112,7 +148,7 @@ class MessageParser:
                 raw_content=content
             )
 
-        # 2. 尝试纯链接格式（只有链接，没有目录名）
+        # 3. 尝试纯链接格式（只有链接，没有目录名）
         # 匹配任何百度网盘链接，即使没有明确的6位数字
         link_pattern = re.compile(r'https://pan\.baidu\.com/s/[A-Za-z0-9_-]+')
         link_match = link_pattern.search(content)
