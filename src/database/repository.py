@@ -495,7 +495,7 @@ class DatabaseRepository:
         finally:
             cursor.close()
 
-    def get_recent_messages_to_retry(self, hours: int = 24) -> list:
+    def get_recent_messages_to_retry(self, hours: int = 24) -> List[str]:
         """
         获取最近N小时内需要重试的消息
 
@@ -508,7 +508,7 @@ class DatabaseRepository:
         Filters:
             - Status must be 'critical_error'
             - Must be within time window
-            - retry_count must be less than MESSAGE_MAX_RETRIES
+            - retry_count must be less than max_message_retries
         """
         # Get max retries from settings, default to 10 if settings not available
         if self.settings and hasattr(self.settings, 'max_message_retries'):
@@ -521,30 +521,20 @@ class DatabaseRepository:
 
         try:
             sql = """
-            SELECT message_hash, retry_count FROM message_process_log
+            SELECT message_hash FROM message_process_log
             WHERE process_status = 'critical_error'
+            AND retry_count < %s
             AND created_at >= DATE_SUB(NOW(), INTERVAL %s HOUR)
+            ORDER BY created_at ASC
             """
 
-            cursor.execute(sql, (hours,))
-            all_results = cursor.fetchall()
+            cursor.execute(sql, (max_retries, hours))
+            results = cursor.fetchall()
 
-            # Filter by retry count
-            eligible_messages = []
-            filtered_count = 0
+            # Extract message_hash from results
+            eligible_messages = [row['message_hash'] for row in results]
 
-            for row in all_results:
-                message_hash = row['message_hash']
-                retry_count = row.get('retry_count', 0)
-
-                if retry_count < max_retries:
-                    eligible_messages.append(message_hash)
-                else:
-                    filtered_count += 1
-                    logger.info(f"Message {message_hash[:8]}... excluded from retry (retry_count={retry_count}, max={max_retries})")
-
-            if filtered_count > 0:
-                logger.info(f"Filtered {filtered_count} messages that reached max retry limit ({max_retries})")
+            logger.info(f"Found {len(eligible_messages)} messages to retry from the last {hours} hours")
 
             return eligible_messages
 
