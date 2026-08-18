@@ -400,19 +400,28 @@ class DatabaseRepository:
 
         Args:
             message_hash: Unique message identifier
-            status: New processing status
+            status: New processing status (must be 'pending', 'processing', 'success', 'failed', or 'critical_error')
             error_message: Optional error details
             execution_summary_id: Optional execution summary ID
             processing_time_ms: Optional processing duration
 
         Returns:
-            bool: True if update successful
+            bool: True if update successful, False if:
+                  - Invalid status value provided
+                  - Message with given message_hash doesn't exist
+                  - Database operation fails
 
         Retry Count Logic:
             - Increment on status transition to 'failed' or 'critical_error'
             - Reset to 0 on status transition to 'success'
             - Unchanged for 'pending' and 'processing'
         """
+        # Input validation - validate status parameter
+        valid_statuses = ['pending', 'processing', 'success', 'failed', 'critical_error']
+        if status not in valid_statuses:
+            logger.error(f"Invalid status '{status}' for message {message_hash}. Valid statuses: {valid_statuses}")
+            return False
+
         cursor = self.connection.cursor()
 
         try:
@@ -457,22 +466,22 @@ class DatabaseRepository:
 
             else:
                 # No retry count change for pending/processing
+                # Clear error_message when transitioning to pending/processing states
                 sql = """
                 UPDATE message_process_log
                 SET process_status = %s,
-                    error_message = %s,
+                    error_message = NULL,
                     execution_summary_id = %s,
                     processing_time_ms = %s
                 WHERE message_hash = %s
                 """
                 cursor.execute(sql, (
                     status,
-                    error_message,
                     execution_summary_id,
                     processing_time_ms,
                     message_hash
                 ))
-                logger.debug(f"Updated message {message_hash[:8]}... status to {status} (retry count unchanged)")
+                logger.debug(f"Updated message {message_hash[:8]}... status to {status} (retry count unchanged, error cleared)")
 
             self.connection.commit()
             return cursor.rowcount > 0
