@@ -105,9 +105,9 @@ CREATE TABLE IF NOT EXISTS message_process_log (
     process_status ENUM('pending', 'processing', 'success', 'failed', 'critical_error')
         DEFAULT 'pending' COMMENT '处理状态',
     error_message TEXT COMMENT '错误信息',
+    retry_count INT DEFAULT 0 COMMENT '失败重试次数',
     execution_summary_id INT COMMENT '关联执行摘要ID',
     processing_time_ms INT COMMENT '处理耗时(毫秒)',
-    retry_count INT DEFAULT 0 COMMENT '失败重试次数',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
     INDEX idx_message_hash (message_hash),
