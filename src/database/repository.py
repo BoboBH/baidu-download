@@ -10,22 +10,24 @@ logger = get_logger(__name__)
 class DatabaseRepository:
     """数据库操作仓库类"""
     
-    def __init__(self, host: str, port: int, user: str, password: str, database: str):
+    def __init__(self, host: str, port: int, user: str, password: str, database: str, settings=None):
         """
         初始化数据库连接
-        
+
         Args:
             host: 数据库主机
             port: 数据库端口
             user: 数据库用户名
             password: 数据库密码
             database: 数据库名称
+            settings: Optional Settings object for configuration access
         """
         self.host = host
         self.port = port
         self.user = user
         self.password = password
         self.database = database
+        self.settings = settings
 
         # 创建数据库连接 (不指定数据库，避免认证问题)
         self.connection = pymysql.connect(
@@ -502,19 +504,49 @@ class DatabaseRepository:
 
         Returns:
             消息哈希列表
+
+        Filters:
+            - Status must be 'critical_error'
+            - Must be within time window
+            - retry_count must be less than MESSAGE_MAX_RETRIES
         """
+        # Get max retries from settings, default to 10 if settings not available
+        if self.settings and hasattr(self.settings, 'max_message_retries'):
+            max_retries = self.settings.max_message_retries
+        else:
+            max_retries = 10
+            logger.warning("Settings not available, using default max_message_retries=10")
+
         cursor = self.connection.cursor()
 
         try:
             sql = """
-            SELECT message_hash FROM message_process_log
+            SELECT message_hash, retry_count FROM message_process_log
             WHERE process_status = 'critical_error'
             AND created_at >= DATE_SUB(NOW(), INTERVAL %s HOUR)
             """
 
             cursor.execute(sql, (hours,))
-            results = cursor.fetchall()
-            return [row['message_hash'] for row in results]
+            all_results = cursor.fetchall()
+
+            # Filter by retry count
+            eligible_messages = []
+            filtered_count = 0
+
+            for row in all_results:
+                message_hash = row['message_hash']
+                retry_count = row.get('retry_count', 0)
+
+                if retry_count < max_retries:
+                    eligible_messages.append(message_hash)
+                else:
+                    filtered_count += 1
+                    logger.info(f"Message {message_hash[:8]}... excluded from retry (retry_count={retry_count}, max={max_retries})")
+
+            if filtered_count > 0:
+                logger.info(f"Filtered {filtered_count} messages that reached max retry limit ({max_retries})")
+
+            return eligible_messages
 
         except Exception as e:
             logger.error(f"Failed to get recent messages to retry: {e}")
