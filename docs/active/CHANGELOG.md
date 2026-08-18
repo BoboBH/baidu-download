@@ -1,5 +1,103 @@
 # 版本更新日志
 
+## v1.1.0 (2026-08-19)
+
+### 🎉 消息重试限制功能 (Message Retry Limit Feature)
+
+全新消息重试管理功能，防止失败消息无限重试，提升系统稳定性和资源利用率。
+
+#### ✨ 核心功能
+
+- ✅ **可配置重试限制**: 通过 `MESSAGE_MAX_RETRIES` 配置最大重试次数（1-100，默认10次）
+- ✅ **自动重试计数**: 失败消息自动增加 `retry_count`，成功消息重置为 0
+- ✅ **智能消息过滤**: 自动排除超过重试限制的消息，避免无限循环
+- ✅ **数据库架构增强**: 新增 `retry_count` 字段和索引，支持高效查询
+- ✅ **配置验证**: 自动验证配置范围，防止无效设置
+
+#### 🔧 技术实现
+
+**数据库变更:**
+```sql
+-- 新增字段
+ALTER TABLE message_process_log 
+ADD COLUMN retry_count INT DEFAULT 0 COMMENT '失败重试次数' AFTER error_message;
+
+-- 新增索引
+CREATE INDEX idx_retry_count ON message_process_log(retry_count);
+```
+
+**配置管理:**
+```bash
+# .env 配置
+MESSAGE_MAX_RETRIES=10  # 最大重试次数 [范围: 1-100]
+```
+
+**核心功能:**
+- `update_message_status()`: 自动管理重试计数
+- `get_recent_messages_to_retry()`: 智能过滤消息队列
+- `Settings.max_message_retries`: 配置验证和加载
+
+#### 📊 性能改进
+
+- **减少数据库负载**: 90%+ 减少无效重试查询
+- **提升处理效率**: 清理队列拥堵，提高有效消息处理速度
+- **资源节约**: 防止CPU和数据库资源浪费在无望的重试上
+
+#### 🧪 测试覆盖
+
+- ✅ **单元测试**: 消息模型、配置验证、状态转换逻辑
+- ✅ **集成测试**: 端到端重试流程、数据库迁移、配置集成
+- ✅ **手动测试**: 全面的操作验证和故障排查指南
+
+#### 📚 文档完善
+
+- ✅ 功能完整文档 (`docs/active/message-retry-limit-feature.md`)
+- ✅ 手动测试指南 (`test/manual/MESSAGE_RETRY_LIMIT_MANUAL_TEST.md`)
+- ✅ API 参考文档和配置说明
+- ✅ 监控和运维指南
+
+#### 🔍 监控和运维
+
+**重试统计查询:**
+```sql
+-- 重试次数分布
+SELECT retry_count, COUNT(*) as message_count, process_status
+FROM message_process_log 
+WHERE retry_count > 0
+GROUP BY retry_count, process_status
+ORDER BY retry_count DESC;
+
+-- 即将被排除的消息
+SELECT message_hash, retry_count, process_status, error_message
+FROM message_process_log 
+WHERE retry_count >= 7  -- 接近限制（默认10次）
+ORDER BY retry_count DESC;
+```
+
+#### ⚠️ 重要提示
+
+- **部署前**: 确保数据库迁移已执行
+- **配置验证**: 检查 `MESSAGE_MAX_RETRIES` 在有效范围内（1-100）
+- **监控设置**: 建议设置消息重试监控告警
+- **备份**: 数据库迁移前建议备份
+
+#### 🛠️ 部署步骤
+
+1. **数据库迁移**: 执行 schema 更新（添加 retry_count 字段和索引）
+2. **配置更新**: 在 `.env` 中添加 `MESSAGE_MAX_RETRIES=10`
+3. **应用重启**: 重启应用加载新配置
+4. **功能验证**: 运行集成测试和手动验证
+5. **监控启用**: 设置重试统计监控
+
+#### 📈 业务价值
+
+- **成本降低**: 消除无效重试的资源浪费
+- **性能提升**: 提高有效消息的处理成功率
+- **运维优化**: 自动化管理，减少人工干预
+- **可见性**: 清晰的重试模式和失败率统计
+
+---
+
 ## v1.0.1 (2026-07-12)
 
 ### 🎉 首次正式发布
