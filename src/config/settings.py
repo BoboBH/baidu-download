@@ -50,6 +50,12 @@ class Settings:
 
         # 消息处理配置
         self.message_default_extraction_code = os.getenv('MESSAGE_DEFAULT_EXTRACTION_CODE', '0409')
+        self.max_message_retries = self._get_int_env('MESSAGE_MAX_RETRIES', default=10)
+
+        # 文件夹智能检测配置
+        self.enable_folder_detection = os.getenv('ENABLE_FOLDER_DETECTION', 'true').lower() == 'true'
+        self.folder_detection_timeout = self._get_int_env('FOLDER_DETECTION_TIMEOUT', default=300)
+        self.temp_folder_prefix = os.getenv('TEMP_FOLDER_PREFIX', 'temp_detect_')
 
         # 数据库配置
         self.db_host = self._get_required_env('DB_HOST')
@@ -112,6 +118,10 @@ class Settings:
     def _get_int_env(self, key: str, default: int = 0) -> int:
         """获取整数类型的环境变量"""
         value = os.getenv(key, str(default))
+        # 处理可能包含注释的情况（如："60 # comment"）
+        if value and isinstance(value, str):
+            # 移除注释部分（# 及其后面的内容）
+            value = value.split('#')[0].strip()
         try:
             return int(value)
         except ValueError:
@@ -147,6 +157,10 @@ class Settings:
         if self.message_default_extraction_code:
             if not re.match(r'^\d{4}$', self.message_default_extraction_code):
                 raise ConfigError(f"Invalid MESSAGE_DEFAULT_EXTRACTION_CODE format: {self.message_default_extraction_code}. Expected 4 digits.")
+
+        # 验证消息重试次数范围（应该是1-100）
+        if not (1 <= self.max_message_retries <= 100):
+            raise ConfigError(f"MESSAGE_MAX_RETRIES must be between 1 and 100: {self.max_message_retries}")
 
         # 验证微信配置（如果启用）
         if self.wxchat_enabled:
