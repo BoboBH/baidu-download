@@ -50,7 +50,7 @@ class Settings:
 
         # 消息处理配置
         self.message_default_extraction_code = os.getenv('MESSAGE_DEFAULT_EXTRACTION_CODE', '0409')
-        self.max_message_retries = self._get_int_env('MESSAGE_MAX_RETRIES', default=10)
+        self.max_message_retries = self._get_int_env('MESSAGE_MAX_RETRIES', default=10)  # 消息最大重试次数
 
         # 文件夹智能检测配置
         self.enable_folder_detection = os.getenv('ENABLE_FOLDER_DETECTION', 'true').lower() == 'true'
