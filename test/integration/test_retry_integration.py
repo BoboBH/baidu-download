@@ -93,15 +93,18 @@ def test_environment():
 
     yield temp_dir, env_config
 
-    # Cleanup
-    RetryIntegrationTestSetup.cleanup_test_environment(temp_dir)
-
-    # Restore original environment
-    for key, original_value in original_env.items():
-        if original_value is not None:
-            os.environ[key] = original_value
-        else:
-            os.environ.pop(key, None)
+    # Restore original environment with proper exception handling
+    try:
+        for key, original_value in original_env.items():
+            if original_value is not None:
+                os.environ[key] = original_value
+            else:
+                os.environ.pop(key, None)
+    except Exception as e:
+        print(f"Warning: Failed to restore environment variable: {e}")
+    finally:
+        # Cleanup
+        RetryIntegrationTestSetup.cleanup_test_environment(temp_dir)
 
 
 @pytest.fixture
@@ -109,6 +112,7 @@ def test_database(test_environment):
     """Create test database connection and schema"""
     temp_dir, env_config = test_environment
 
+    db_repo = None
     try:
         from src.database.repository import DatabaseRepository
         from src.config.settings import Settings
@@ -126,32 +130,70 @@ def test_database(test_environment):
             settings=settings
         )
 
-        yield db_repo, settings
+        # Validate database connection is actually functional
+        try:
+            cursor = db_repo.connection.cursor()
+            cursor.execute("SELECT 1 as test_value")
+            result = cursor.fetchone()
+            cursor.close()
 
-        # Cleanup database after tests
-        db_repo.close()
+            if result is None or result.get('test_value') != 1:
+                raise ConnectionError("Database connection validation failed: test query returned unexpected result")
+
+        except Exception as conn_error:
+            if db_repo:
+                db_repo.close()
+            pytest.skip(f"Database connection validation failed: {conn_error}")
+
+        yield db_repo, settings
 
     except Exception as e:
         pytest.skip(f"Failed to create test database: {e}")
+    finally:
+        # Cleanup database after tests
+        if db_repo:
+            try:
+                db_repo.close()
+            except Exception as e:
+                print(f"Warning: Failed to close database connection: {e}")
 
 
 @pytest.fixture
 def clean_database(test_database):
-    """Ensure clean database state for each test"""
+    """Ensure clean database state for each test using transactions"""
     db_repo, settings = test_database
 
-    # Clean existing test data
-    cursor = db_repo.connection.cursor()
+    cursor = None
     try:
-        cursor.execute("DELETE FROM message_process_log WHERE 1=1")
-        db_repo.connection.commit()
-    except Exception as e:
-        db_repo.connection.rollback()
-        pytest.skip(f"Failed to clean database: {e}")
-    finally:
-        cursor.close()
+        # Start transaction for test isolation
+        db_repo.connection.begin()
 
-    yield db_repo, settings
+        # Clean existing test data using TRUNCATE for better performance
+        cursor = db_repo.connection.cursor()
+        try:
+            cursor.execute("TRUNCATE TABLE message_process_log")
+            db_repo.connection.commit()
+        except Exception as e:
+            db_repo.connection.rollback()
+            pytest.skip(f"Failed to clean database with TRUNCATE: {e}")
+
+        yield db_repo, settings
+
+        # Rollback to clean state after test
+        try:
+            db_repo.connection.rollback()
+        except Exception as e:
+            pytest.skip(f"Failed to rollback transaction: {e}")
+
+    except Exception as e:
+        pytest.skip(f"Failed to setup test transaction: {e}")
+    finally:
+        # Ensure cursor is always closed
+        if cursor:
+            try:
+                cursor.close()
+            except Exception as e:
+                print(f"Warning: Failed to close cursor: {e}")
 
 
 class TestRetryIntegration:
@@ -332,12 +374,19 @@ class TestRetryIntegration:
         """
         db_repo, settings = test_database
 
-        cursor = db_repo.connection.cursor()
-
+        cursor = None
         try:
             # Step 1: Verify table structure
+            cursor = db_repo.connection.cursor()
             cursor.execute("DESCRIBE message_process_log")
             columns = cursor.fetchall()
+
+            # Validate database response structure
+            if not columns or not isinstance(columns, list):
+                raise ValueError("Database response structure invalid: expected list of columns")
+            if not all(isinstance(col, dict) and 'Field' in col for col in columns):
+                raise ValueError("Database response structure invalid: each column should be a dict with 'Field' key")
+
             column_names = [col['Field'] for col in columns]
 
             # Verify retry_count column exists
@@ -355,6 +404,10 @@ class TestRetryIntegration:
             # Step 3: Verify index exists
             cursor.execute("SHOW INDEX FROM message_process_log WHERE Key_name = 'idx_retry_count'")
             indexes = cursor.fetchall()
+
+            # Validate index response structure
+            if not isinstance(indexes, list):
+                raise ValueError("Database response structure invalid: expected list of indexes")
 
             assert len(indexes) > 0, "idx_retry_count index should exist"
 
@@ -443,10 +496,16 @@ class TestRetryIntegration:
             print("✓ Test completed: Database migration verified - schema, index, data preservation, and operations all working correctly")
 
         except Exception as e:
-            db_repo.connection.rollback()
+            if db_repo.connection:
+                db_repo.connection.rollback()
             raise pytest.Failed(f"Database migration test failed: {e}")
         finally:
-            cursor.close()
+            # Ensure cursor is always closed
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception as e:
+                    print(f"Warning: Failed to close cursor: {e}")
 
 
 class TestRetryIntegrationEdgeCases:
@@ -597,30 +656,45 @@ class TestRetryIntegrationEdgeCases:
         ]
 
         message_hashes = []
-        for retry_count, status, description in retry_scenarios:
-            message_hash = hashlib.md5(f"test_{description}".encode()).hexdigest()
-            message_hashes.append((message_hash, retry_count, status, description))
+        cursor = None
+        try:
+            for retry_count, status, description in retry_scenarios:
+                message_hash = hashlib.md5(f"test_{description}".encode()).hexdigest()
+                message_hashes.append((message_hash, retry_count, status, description))
 
-            message_log = MessageProcessLog(
-                message_hash=message_hash,
-                original_message=f"test_{description}",
-                share_link=f"https://pan.baidu.com/s/{description}",
-                folder_name="240724",
-                extraction_code=TEST_EXTRACTION_CODE,
-                source='feishu',
-                process_status=status
-            )
+                message_log = MessageProcessLog(
+                    message_hash=message_hash,
+                    original_message=f"test_{description}",
+                    share_link=f"https://pan.baidu.com/s/{description}",
+                    folder_name="240724",
+                    extraction_code=TEST_EXTRACTION_CODE,
+                    source='feishu',
+                    process_status=status
+                )
 
-            db_repo.insert_message_log(message_log)
+                db_repo.insert_message_log(message_log)
 
-            # Manually set retry_count for testing
-            cursor = db_repo.connection.cursor()
-            cursor.execute(
-                "UPDATE message_process_log SET retry_count = %s WHERE message_hash = %s",
-                (retry_count, message_hash)
-            )
+                # Manually set retry_count for testing
+                if not cursor:
+                    cursor = db_repo.connection.cursor()
+                cursor.execute(
+                    "UPDATE message_process_log SET retry_count = %s WHERE message_hash = %s",
+                    (retry_count, message_hash)
+                )
+
             db_repo.connection.commit()
-            cursor.close()
+
+        except Exception as e:
+            if db_repo.connection:
+                db_repo.connection.rollback()
+            raise pytest.Failed(f"Failed to setup test messages: {e}")
+        finally:
+            # Ensure cursor is closed
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception as e:
+                    print(f"Warning: Failed to close cursor: {e}")
 
         # Get messages eligible for retry
         retry_messages = db_repo.get_recent_messages_to_retry(hours=24)
