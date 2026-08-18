@@ -5,7 +5,7 @@
 -- Phase 1: Add retry_count column with default value
 ALTER TABLE message_process_log
 ADD COLUMN retry_count INT DEFAULT 0 COMMENT '失败重试次数'
-AFTER processing_time_ms;
+AFTER error_message;
 
 -- Phase 2: Create index for efficient retry filtering
 CREATE INDEX idx_retry_count ON message_process_log(retry_count);
