@@ -230,13 +230,13 @@ class DatabaseRepository:
                     file_name=row['file_name'],
                     file_path=row['file_path'],
                     transfer_status=row['transfer_status'],
-                    ERROR_MESSAGE=row['error_message'],
-                    START_TIME=row['start_time'],
-                    DOWNLOAD_TIME=row['download_time'],
-                    UPLOAD_TIME=row['upload_time'],
-                    FILE_SIZE=row['file_size'],
-                    CREATED_AT=row['created_at'],
-                    UPDATED_AT=row['updated_at']
+                    error_message=row['error_message'],
+                    start_time=row['start_time'],
+                    download_time=row['download_time'],
+                    upload_time=row['upload_time'],
+                    file_size=row['file_size'],
+                    created_at=row['created_at'],
+                    updated_at=row['updated_at']
                 ))
 
             return logs
@@ -285,9 +285,9 @@ class DatabaseRepository:
                     start_time=row['start_time'],
                     download_time=row['download_time'],
                     upload_time=row['upload_time'],
-                    FILE_SIZE=row['file_size'],
-                    CREATED_AT=row['created_at'],
-                    UPDATED_AT=row['updated_at']
+                    file_size=row['file_size'],
+                    created_at=row['created_at'],
+                    updated_at=row['updated_at']
                 )
             else:
                 return None
@@ -378,6 +378,7 @@ class DatabaseRepository:
                     error_message=row['error_message'],
                     execution_summary_id=row.get('execution_summary_id'),
                     processing_time_ms=row.get('processing_time_ms'),
+                    retry_count=row.get('retry_count', 0),
                     created_at=row['created_at'],
                     updated_at=row['updated_at']
                 )

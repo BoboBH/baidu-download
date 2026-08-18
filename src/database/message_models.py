@@ -15,6 +15,7 @@ class MessageProcessLog:
     error_message: Optional[str] = None
     execution_summary_id: Optional[int] = None
     processing_time_ms: Optional[int] = None  # 毫秒
+    retry_count: int = 0  # 失败重试次数
     id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
