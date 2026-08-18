@@ -223,6 +223,70 @@ SHOW TABLES;
 -- 应该看到: file_transfer_log, execution_summary
 ```
 
+#### 4.3 数据库迁移 - 消息重试限制功能
+
+**重要**: 如需使用消息重试限制功能，需要执行以下数据库迁移步骤。
+
+##### 4.3.1 检查当前数据库状态
+```sql
+-- 检查message_process_log表是否存在retry_count字段
+DESCRIBE message_process_log;
+
+-- 检查是否已有相关索引
+SHOW INDEX FROM message_process_log WHERE Key_name = 'idx_retry_count';
+```
+
+##### 4.3.2 执行迁移脚本
+```sql
+-- 添加retry_count字段（如果不存在）
+ALTER TABLE message_process_log 
+ADD COLUMN retry_count INT DEFAULT 0 COMMENT '失败重试次数' 
+AFTER error_message;
+
+-- 创建性能索引
+CREATE INDEX idx_retry_count ON message_process_log(retry_count);
+
+-- 为现有数据设置默认值
+UPDATE message_process_log SET retry_count = 0 WHERE retry_count IS NULL;
+```
+
+##### 4.3.3 验证迁移结果
+```sql
+-- 验证字段存在且正确
+SELECT COLUMN_NAME, COLUMN_TYPE, COLUMN_DEFAULT, IS_NULLABLE 
+FROM INFORMATION_SCHEMA.COLUMNS 
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'message_process_log' AND COLUMN_NAME = 'retry_count';
+
+-- 验证索引存在
+SHOW INDEX FROM message_process_log WHERE Key_name = 'idx_retry_count';
+
+-- 检查数据完整性
+SELECT COUNT(*) as total_messages, 
+       SUM(CASE WHEN retry_count = 0 THEN 1 ELSE 0 END) as zero_retry_count,
+       SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END) as positive_retry_count
+FROM message_process_log;
+```
+
+##### 4.3.4 回滚步骤（如需要）
+```sql
+-- 如果迁移出现问题，可以回滚
+-- 删除索引
+DROP INDEX idx_retry_count ON message_process_log;
+
+-- 删除字段
+ALTER TABLE message_process_log DROP COLUMN retry_count;
+```
+
+##### 4.3.5 配置环境变量
+```bash
+# 在.env文件中添加消息重试限制配置
+MESSAGE_MAX_RETRIES=10
+
+# 验证配置加载
+# Python版本:
+python -c "from src.config.settings import Settings; s = Settings(); print(f'最大重试次数: {s.max_message_retries}')"
+```
+
 #### 5. 测试运行
 
 ##### 5.1 EXE版本测试 (方案A) ⭐
