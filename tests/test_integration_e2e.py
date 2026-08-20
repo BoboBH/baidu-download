@@ -37,17 +37,53 @@ from src.processor.retry_manager import RetryManager, RetryConfig
 from src.database.message_models import MessageProcessLog
 
 
-class TestRealDatabaseIntegration(unittest.TestCase):
-    """Test real database integration with in-memory SQLite."""
+# =============================================================================
+# TEST CONFIGURATION AND HELPERS
+# =============================================================================
 
-    def setUp(self):
-        """Set up test fixtures with in-memory SQLite database."""
-        # Create in-memory SQLite database for testing
-        self.conn = sqlite3.connect(':memory:', check_same_thread=False)
-        self.cursor = self.conn.cursor()
+class TestConfig:
+    """Centralized configuration for integration tests."""
 
-        # Initialize database schema
-        self._init_database_schema()
+    # Timeout configurations (in seconds)
+    FAST_TIMEOUT = 1
+    NORMAL_TIMEOUT = 5
+    SLOW_TIMEOUT = 10
+
+    # Retry configurations
+    TEST_MAX_RETRIES = 3
+    TEST_BASE_DELAY_MS = 100
+    TEST_FAST_DELAY_MS = 10  # For faster testing
+
+    # HTTP status codes for error assertions
+    CLIENT_ERROR_CODES = ['404', '403', '401', '503']
+    NETWORK_ERROR_KEYWORDS = ['timeout', 'connection', 'network', '连接', '超时']
+
+
+def get_reliable_test_pdf_url():
+    """
+    Try multiple reliable PDF sources with fallbacks.
+
+    Returns a working PDF URL or raises SkipTest if none available.
+    """
+    test_urls = [
+        "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+        "https://www.africau.edu/images/default/sample.pdf",
+        "https://file-examples.com/storage/feebcdb1a666.pdf6"
+    ]
+
+    for url in test_urls:
+        try:
+            response = requests.head(url, timeout=TestConfig.FAST_TIMEOUT)
+            if response.status_code == 200:
+                return url
+        except Exception:
+            continue
+
+    raise unittest.SkipTest("No reliable test PDF URL available - skipping tests that require external PDF")
+
+
+class TestDatabaseMixin:
+    """Mixin providing database setup for integration tests."""
 
     def _init_database_schema(self):
         """Create message_process_log table in test database."""
@@ -74,6 +110,68 @@ class TestRealDatabaseIntegration(unittest.TestCase):
         """
         self.cursor.execute(sql)
         self.conn.commit()
+
+
+class TestAssertionsMixin:
+    """Mixin providing consistent assertion patterns."""
+
+    def assert_error_contains_any(self, error, patterns, message=""):
+        """
+        Assert error string contains at least one of the specified patterns.
+
+        Args:
+            error: Exception or error string to check
+            patterns: List of strings to search for in error message
+            message: Custom assertion message
+        """
+        error_str = str(error or '')
+        self.assertTrue(
+            any(pattern in error_str for pattern in patterns),
+            f"{message}. Got: {error_str}"
+        )
+
+    def assert_http_error(self, error, expected_codes=None):
+        """
+        Assert error is HTTP error with expected status codes.
+
+        Args:
+            error: Exception or error string to check
+            expected_codes: List of HTTP status codes to look for (defaults to common client errors)
+        """
+        if expected_codes is None:
+            expected_codes = TestConfig.CLIENT_ERROR_CODES
+
+        self.assert_error_contains_any(
+            error,
+            expected_codes,
+            "Error should mention HTTP status code"
+        )
+
+    def assert_network_error(self, error):
+        """
+        Assert error is a network-related error.
+
+        Args:
+            error: Exception or error string to check
+        """
+        error_lower = str(error).lower()
+        self.assertTrue(
+            any(keyword in error_lower for keyword in TestConfig.NETWORK_ERROR_KEYWORDS),
+            f"Error should mention network/connection/timeout error, got: {error}"
+        )
+
+
+class TestRealDatabaseIntegration(TestDatabaseMixin, unittest.TestCase):
+    """Test real database integration with in-memory SQLite."""
+
+    def setUp(self):
+        """Set up test fixtures with in-memory SQLite database."""
+        # Create in-memory SQLite database for testing
+        self.conn = sqlite3.connect(':memory:', check_same_thread=False)
+        self.cursor = self.conn.cursor()
+
+        # Initialize database schema
+        self._init_database_schema()
 
     def test_database_message_insertion(self):
         """Test real database insertion of message log."""
@@ -169,7 +267,7 @@ class TestRealDatabaseIntegration(unittest.TestCase):
         self.conn.close()
 
 
-class TestRealHTTPIntegration(unittest.TestCase):
+class TestRealHTTPIntegration(TestAssertionsMixin, unittest.TestCase):
     """Test real HTTP requests to reliable public endpoints."""
 
     def setUp(self):
@@ -181,8 +279,8 @@ class TestRealHTTPIntegration(unittest.TestCase):
 
     def test_real_pdf_download_success(self):
         """Test real PDF download from reliable public endpoint."""
-        # Use reliable test PDF from W3C
-        test_pdf_url = "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+        # Use reliable test PDF with fallback mechanism
+        test_pdf_url = get_reliable_test_pdf_url()
 
         processor = PdfLinkProcessor(self.settings)
 
@@ -228,10 +326,8 @@ class TestRealHTTPIntegration(unittest.TestCase):
         self.assertIsNotNone(download_result.error, "Should have error message")
         # 404 errors should not be retryable
         self.assertFalse(download_result.retryable, "404 errors should not be retryable")
-        # Error should contain status code info (may be 404 or similar 4xx error)
-        error_str = str(download_result.error or '')
-        self.assertTrue(any(code in error_str for code in ['404', '403', '401', '503']),
-                       f"Error should mention 4xx/5xx status code, got: {error_str}")
+        # Use consistent error assertion
+        self.assert_http_error(download_result.error, TestConfig.CLIENT_ERROR_CODES)
 
     def test_real_pdf_download_timeout(self):
         """Test real timeout error handling."""
@@ -240,7 +336,7 @@ class TestRealHTTPIntegration(unittest.TestCase):
 
         processor = PdfLinkProcessor(self.settings)
         # Override timeout to be very short for testing
-        processor.timeout = 1  # 1 second timeout
+        processor.timeout = TestConfig.FAST_TIMEOUT
 
         parse_result = ParseResult(
             message_type='pdf_link',
@@ -256,10 +352,8 @@ class TestRealHTTPIntegration(unittest.TestCase):
         self.assertFalse(download_result.success, "Timeout request should fail")
         self.assertIsNotNone(download_result.error, "Should have error message")
         self.assertTrue(download_result.retryable, "Timeout errors should be retryable")
-        # Check for timeout/connection error in error message
-        error_lower = str(download_result.error).lower()
-        self.assertTrue(any(keyword in error_lower for keyword in ['timeout', 'connection', 'network', '连接', '超时']),
-                       f"Error should mention timeout/connection/network error, got: {download_result.error}")
+        # Use consistent network error assertion
+        self.assert_network_error(download_result.error)
 
     def test_real_pdf_download_invalid_url(self):
         """Test real invalid URL error handling."""
@@ -268,7 +362,7 @@ class TestRealHTTPIntegration(unittest.TestCase):
 
         processor = PdfLinkProcessor(self.settings)
         # Short timeout for faster testing
-        processor.timeout = 5
+        processor.timeout = TestConfig.NORMAL_TIMEOUT
 
         parse_result = ParseResult(
             message_type='pdf_link',
@@ -285,9 +379,11 @@ class TestRealHTTPIntegration(unittest.TestCase):
         self.assertIsNotNone(download_result.error, "Should have error message")
         # Network errors are retryable
         self.assertTrue(download_result.retryable, "Network errors should be retryable")
+        # Use consistent network error assertion
+        self.assert_network_error(download_result.error)
 
 
-class TestCompletePDFWorkflow(unittest.TestCase):
+class TestCompletePDFWorkflow(TestAssertionsMixin, unittest.TestCase):
     """Test complete PDF workflow: Parse → Router → Download → Process → Cleanup."""
 
     def setUp(self):
@@ -301,8 +397,8 @@ class TestCompletePDFWorkflow(unittest.TestCase):
 
     def test_complete_pdf_workflow_success(self):
         """Test complete successful PDF processing workflow."""
-        # Real test PDF URL
-        test_pdf_url = "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+        # Use reliable test PDF with fallback mechanism
+        test_pdf_url = get_reliable_test_pdf_url()
 
         # Step 1: Parse message
         content = f"Please review this PDF: {test_pdf_url}"
@@ -366,17 +462,15 @@ class TestCompletePDFWorkflow(unittest.TestCase):
         self.assertIsNotNone(router_result)
         self.assertFalse(router_result.success, "Workflow should fail for 404")
         self.assertIsNotNone(router_result.error, "Should have error message")
-        # Error should contain status code info
-        error_str = str(router_result.error or '')
-        self.assertTrue(any(code in error_str for code in ['404', '403', '401', '503']),
-                       f"Error should mention 4xx/5xx status code, got: {error_str}")
+        # Use consistent error assertion
+        self.assert_http_error(router_result.error, TestConfig.CLIENT_ERROR_CODES)
 
         # Verify download failed
         self.assertIsNotNone(router_result.download_result)
         self.assertFalse(router_result.download_result.success, "Download should fail")
 
 
-class TestCompleteBaiduPanWorkflow(unittest.TestCase):
+class TestCompleteBaiduPanWorkflow(TestDatabaseMixin, unittest.TestCase):
     """Test complete BaiduPan workflow: Parse → Router → Database."""
 
     def setUp(self):
@@ -392,32 +486,6 @@ class TestCompleteBaiduPanWorkflow(unittest.TestCase):
             self._init_database_schema()
         except Exception as e:
             self.skipTest(f"Components not available: {e}")
-
-    def _init_database_schema(self):
-        """Create message_process_log table in test database."""
-        sql = """
-        CREATE TABLE IF NOT EXISTS message_process_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_hash VARCHAR(64) NOT NULL UNIQUE,
-            original_message TEXT,
-            share_link TEXT,
-            folder_name TEXT,
-            extraction_code TEXT,
-            source VARCHAR(50) DEFAULT 'feishu',
-            message_type VARCHAR(50) DEFAULT 'baidupan',
-            raw_message TEXT,
-            file_info TEXT,
-            process_status VARCHAR(50) DEFAULT 'pending',
-            error_message TEXT,
-            execution_summary_id INTEGER,
-            processing_time_ms INTEGER,
-            retry_count INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-        self.cursor.execute(sql)
-        self.conn.commit()
 
     def test_complete_baidupan_workflow_parse_to_database(self):
         """Test complete BaiduPan workflow from parsing to database storage."""
@@ -601,14 +669,14 @@ class TestCompleteBaiduPanWorkflow(unittest.TestCase):
         self.conn.close()
 
 
-class TestRetryWorkflowWithRealErrors(unittest.TestCase):
+class TestRetryWorkflowWithRealErrors(TestAssertionsMixin, unittest.TestCase):
     """Test retry workflow with REAL HTTP requests to public endpoints."""
 
     def setUp(self):
         """Set up test fixtures."""
         self.retry_config = RetryConfig(
-            max_retries=3,
-            base_delay_ms=100,  # Short delay for testing
+            max_retries=TestConfig.TEST_MAX_RETRIES,
+            base_delay_ms=TestConfig.TEST_BASE_DELAY_MS,
             exponential_base=2
         )
         self.retry_manager = RetryManager(self.retry_config)
@@ -626,48 +694,54 @@ class TestRetryWorkflowWithRealErrors(unittest.TestCase):
     def test_retry_workflow_real_timeout_to_success(self):
         """Test retry workflow with REAL HTTP timeout → retry → success."""
         attempts = 0
+        max_timeout_attempts = 2  # Clear limit for timeout attempts
 
-        def real_request_with_timeout_and_success():
-            """Make real HTTP requests that timeout initially then succeed."""
+        def simulate_request_with_timeout_then_success():
+            """
+            Make real HTTP requests: timeout attempts → success attempt.
+
+            Uses local network timeout (10.255.255.1) for reliable timeout simulation.
+            Clear separation: first N attempts timeout, then success.
+            """
             nonlocal attempts
             attempts += 1
 
-            if attempts < 3:
-                # First two attempts: REAL timeout using non-existent domain
+            if attempts <= max_timeout_attempts:
+                # Timeout attempts: Use local network timeout
                 try:
-                    # Use non-existent domain with very short timeout to guarantee timeout
+                    # Local network timeout (10.255.255.1) - reliable timeout simulation
                     response = requests.get(
-                        "http://this-domain-absolutely-does-not-exist-12345.com/test",
-                        timeout=1  # 1 second timeout - will definitely timeout on non-existent domain
+                        "http://10.255.255.1/test",
+                        timeout=TestConfig.FAST_TIMEOUT
                     )
                     return self._make_request_result(True, True)
                 except (requests.exceptions.Timeout, requests.exceptions.ConnectTimeout) as e:
-                    # REAL timeout occurred (connection timeout)
+                    # Explicit timeout error - retryable
                     return self._make_request_result(False, True, f"Connection timeout: {str(e)}")
                 except requests.exceptions.ConnectionError as e:
-                    # Connection errors are also retryable
+                    # Connection error - retryable
                     return self._make_request_result(False, True, f"Connection error: {str(e)}")
-                except Exception as e:
-                    return self._make_request_result(False, True, f"Network error: {str(e)}")
             else:
-                # Third attempt: REAL successful request with reliable endpoint
+                # Success attempt: Use reliable endpoint
                 try:
                     response = requests.get(
                         "https://www.google.com",
-                        timeout=10
+                        timeout=TestConfig.SLOW_TIMEOUT
                     )
                     return self._make_request_result(True, True)
                 except Exception as e:
-                    # If even the success request fails, return success anyway for test
-                    return self._make_request_result(True, True)
+                    # If success endpoint fails, treat as test infrastructure issue
+                    raise unittest.SkipTest(f"Success endpoint unavailable: {e}")
 
         # Reset retry manager for this test
         self.retry_manager = RetryManager(self.retry_config)
 
-        # Retry workflow with REAL HTTP requests
+        # Execute retry workflow with clear attempt tracking
         result = None
-        while attempts < 4:  # Safety limit to prevent infinite loop
-            result = real_request_with_timeout_and_success()
+        max_total_attempts = max_timeout_attempts + 2  # Safety limit
+
+        for attempt_num in range(1, max_total_attempts + 1):
+            result = simulate_request_with_timeout_then_success()
 
             if result.success:
                 # Success - stop retrying
@@ -678,13 +752,17 @@ class TestRetryWorkflowWithRealErrors(unittest.TestCase):
                 self.retry_manager.record_retry_attempt()
                 self.retry_manager.wait_if_needed(result)
             else:
-                # Should not reach here in this test
+                # Should not retry - stop
                 break
 
         # Verify retry workflow completed successfully
-        self.assertGreaterEqual(attempts, 2, "Should make at least 2 attempts")
-        self.assertLessEqual(attempts, 4, "Should make at most 4 attempts")
+        self.assertGreaterEqual(attempts, max_timeout_attempts + 1,
+                               f"Should make at least {max_timeout_attempts + 1} attempts (timeouts + success)")
+        self.assertLessEqual(attempts, max_total_attempts,
+                            f"Should make at most {max_total_attempts} attempts")
         self.assertTrue(result.success, "Final result should be success")
+        self.assertEqual(self.retry_manager.current_retry_count, max_timeout_attempts,
+                        f"Should have {max_timeout_attempts} retry count")
 
     def test_retry_workflow_real_404_immediate_failure(self):
         """Test that REAL 404 errors fail immediately without retries."""
@@ -696,16 +774,14 @@ class TestRetryWorkflowWithRealErrors(unittest.TestCase):
             attempts += 1
 
             try:
-                # Use a more reliable method to test 404
-                # Try a known non-existent URL on a reliable service
+                # Use a reliable method to test 404
                 response = requests.get(
                     "https://www.google.com/this-page-definitely-does-not-exist-404",
-                    timeout=10
+                    timeout=TestConfig.SLOW_TIMEOUT
                 )
-                # If we get a response, check if it's a 404
+                # Check if it's a 404 or other 4xx error
                 if response.status_code == 404:
                     return self._make_request_result(False, False, f"File not found: 404")
-                # Google might redirect, so treat other 4xx as non-retryable
                 elif 400 <= response.status_code < 500:
                     return self._make_request_result(False, False, f"Client error: {response.status_code}")
                 else:
@@ -732,12 +808,9 @@ class TestRetryWorkflowWithRealErrors(unittest.TestCase):
         self.assertEqual(attempts, 1, "Should only make 1 attempt")
         self.assertEqual(self.retry_manager.current_retry_count, 0, "Should have 0 retries")
         self.assertFalse(result.success, "Result should be failure")
-        # Check for 404 or other 4xx error
-        error_str = str(result.error)
-        self.assertTrue(
-            any(code in error_str for code in ['404', 'Client error']),
-            f"Error should mention 404 or client error, got: {error_str}"
-        )
+        # Use consistent error assertion
+        self.assert_error_contains_any(result.error, ['404', 'Client error'],
+                                      "Error should mention 404 or client error")
 
     def test_retry_workflow_max_retries_with_real_timeouts(self):
         """Test that retries stop after max_retries with REAL timeout requests."""
@@ -746,7 +819,7 @@ class TestRetryWorkflowWithRealErrors(unittest.TestCase):
 
         config = RetryConfig(
             max_retries=max_retries,
-            base_delay_ms=10,  # Very short for testing
+            base_delay_ms=TestConfig.TEST_FAST_DELAY_MS,  # Very short for testing
             exponential_base=2
         )
         manager = RetryManager(config)
@@ -757,24 +830,24 @@ class TestRetryWorkflowWithRealErrors(unittest.TestCase):
             attempts += 1
 
             try:
-                # REAL timeout every time using non-existent domain
+                # Use local network timeout for reliable timeout simulation
                 response = requests.get(
-                    "http://nonexistent-domain-for-timeout-test.com/test",
-                    timeout=1  # 1 second timeout - will definitely timeout on non-existent domain
+                    "http://10.255.255.1/test",
+                    timeout=TestConfig.FAST_TIMEOUT
                 )
                 return self._make_request_result(True, True)
             except (requests.exceptions.Timeout, requests.exceptions.ConnectTimeout) as e:
-                # REAL timeout occurred (connection timeout)
                 return self._make_request_result(False, True, f"Connection timeout: {str(e)}")
             except requests.exceptions.ConnectionError as e:
-                # Connection errors are also retryable
                 return self._make_request_result(False, True, f"Connection error: {str(e)}")
             except Exception as e:
                 return self._make_request_result(False, True, f"Network error: {str(e)}")
 
         # Retry loop with REAL HTTP requests
         result = None
-        while attempts < 10:  # Safety limit to prevent infinite loop
+        max_safety_attempts = 10  # Safety limit to prevent infinite loop
+
+        for attempt_num in range(1, max_safety_attempts + 1):
             result = real_continuous_timeout_request()
 
             if manager.should_retry(result):
@@ -797,10 +870,18 @@ class TestRetryWorkflowWithRealErrors(unittest.TestCase):
             delay = self.retry_config.get_retry_delay(retry_num)
             delays.append(delay)
 
-        # Verify exponential backoff: 100ms, 200ms, 400ms
-        self.assertEqual(delays[0], 100, "First retry delay should be 100ms")
-        self.assertEqual(delays[1], 200, "Second retry delay should be 200ms")
-        self.assertEqual(delays[2], 400, "Third retry delay should be 400ms")
+        # Verify exponential backoff using TestConfig values
+        expected_delays = [
+            TestConfig.TEST_BASE_DELAY_MS,  # 100ms
+            TestConfig.TEST_BASE_DELAY_MS * 2,  # 200ms
+            TestConfig.TEST_BASE_DELAY_MS * 4  # 400ms
+        ]
+        self.assertEqual(delays[0], expected_delays[0],
+                        f"First retry delay should be {expected_delays[0]}ms")
+        self.assertEqual(delays[1], expected_delays[1],
+                        f"Second retry delay should be {expected_delays[1]}ms")
+        self.assertEqual(delays[2], expected_delays[2],
+                        f"Third retry delay should be {expected_delays[2]}ms")
 
 
 class TestMessagePriorityRouting(unittest.TestCase):
@@ -930,7 +1011,7 @@ class TestBackwardCompatibility(unittest.TestCase):
         self.assertEqual(len(hash1), 32, "Hash should be 32 characters (MD5)")
 
 
-class TestDatabaseIntegrationWithRetry(unittest.TestCase):
+class TestDatabaseIntegrationWithRetry(TestDatabaseMixin, unittest.TestCase):
     """Test database integration with retry count tracking."""
 
     def setUp(self):
@@ -941,32 +1022,6 @@ class TestDatabaseIntegrationWithRetry(unittest.TestCase):
 
         # Track message hashes for duplicate detection tests
         self.message_hashes = []
-
-    def _init_database_schema(self):
-        """Create database schema."""
-        sql = """
-        CREATE TABLE IF NOT EXISTS message_process_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_hash VARCHAR(64) NOT NULL UNIQUE,
-            original_message TEXT,
-            share_link TEXT,
-            folder_name TEXT,
-            extraction_code TEXT,
-            source VARCHAR(50) DEFAULT 'feishu',
-            message_type VARCHAR(50) DEFAULT 'baidupan',
-            raw_message TEXT,
-            file_info TEXT,
-            process_status VARCHAR(50) DEFAULT 'pending',
-            error_message TEXT,
-            execution_summary_id INTEGER,
-            processing_time_ms INTEGER,
-            retry_count INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-        self.cursor.execute(sql)
-        self.conn.commit()
 
     def test_retry_count_increments_on_failure(self):
         """Test that retry_count increments on each failure."""
