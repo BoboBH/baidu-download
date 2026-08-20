@@ -62,9 +62,8 @@ class TestPdfLinkProcessor(unittest.TestCase):
 
     def test_successful_pdf_download_real_http(self):
         """Test successful PDF download using real HTTP request"""
-        # Use a reliable small PDF file for testing
-        # This is a sample PDF from a reliable source
-        pdf_url = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
+        # Use the official Franklin Templestone PDF for testing
+        pdf_url = 'https://franklintempletonprod.widen.net/content/glbkkcqozl/pdf/FTIMD-8-14-26-micro-over-macro.pdf'
 
         parse_result = ParseResult(
             message_type='pdf_link',
@@ -94,22 +93,20 @@ class TestPdfLinkProcessor(unittest.TestCase):
 
     def test_file_size_limit_from_header_real_http(self):
         """Test file size limit enforcement from content-length header using real HTTP"""
-        # Use a URL that returns content-length header (we'll test with a reasonably large file)
-        # For this test, we'll use a medium-sized PDF to avoid long downloads
-        # We're testing that the limit check works based on the header
-
-        # First test with a file that should be under the limit
-        small_pdf_url = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
+        # Use the official Franklin Templestone PDF for testing
+        # This file is 0.30 MB, well under the 200MB limit
+        real_pdf_url = 'https://franklintempletonprod.widen.net/content/glbkkcqozl/pdf/FTIMD-8-14-26-micro-over-macro.pdf'
 
         parse_result = ParseResult(
             message_type='pdf_link',
-            unique_identifier=small_pdf_url,
+            unique_identifier=real_pdf_url,
             source='feishu',
-            pdf_url=small_pdf_url
+            pdf_url=real_pdf_url
         )
 
         result = self.processor.download(parse_result)
-        self.assertTrue(result.success, f"Small file download should succeed: {result.error}")
+        self.assertTrue(result.success, f"Real PDF file download should succeed: {result.error}")
+        self.assertGreater(result.file_size, 0, "Should have downloaded content")
 
     def test_download_timeout_real_http(self):
         """Test timeout handling using real HTTP request to slow endpoint"""
@@ -180,62 +177,72 @@ class TestPdfLinkProcessor(unittest.TestCase):
             self.assertFalse(result.success, f"Invalid URL '{invalid_url}' should fail")
             self.assertIsNotNone(result.error)
 
-    def test_process_method_returns_success(self):
-        """Test that process method returns success (PDF needs no processing)"""
+    def test_complete_workflow_download_process_upload(self):
+        """Test complete workflow: download -> process -> upload using real PDF"""
+        # Use the official Franklin Templestone PDF for complete workflow testing
+        pdf_url = 'https://franklintempletonprod.widen.net/content/glbkkcqozl/pdf/FTIMD-8-14-26-micro-over-macro.pdf'
+
         parse_result = ParseResult(
             message_type='pdf_link',
-            unique_identifier='test',
+            unique_identifier=pdf_url,
             source='feishu',
-            pdf_url='https://example.com/test.pdf'
+            pdf_url=pdf_url
         )
 
-        # Create a real temporary file for testing
-        temp_file = os.path.join(tempfile.gettempdir(), 'test_process.pdf')
-        with open(temp_file, 'wb') as f:
-            f.write(b'%PDF-1.4\nfake pdf content for testing')
+        # Step 1: Download the PDF (real HTTP request)
+        download_result = self.processor.download(parse_result)
+        self.assertTrue(download_result.success, f"Download failed: {download_result.error}")
+        self.assertIsNotNone(download_result.local_path)
+        self.assertGreater(download_result.file_size, 0)
+        self.assertTrue(os.path.exists(download_result.local_path))
 
-        try:
-            # Create a download result with the real file
-            download_result = DownloadResult(
-                success=True,
-                local_path=temp_file,
-                file_size=1024,
-                filename='test.pdf'
-            )
+        # Step 2: Process the downloaded PDF
+        process_result = self.processor.process(download_result, parse_result)
+        self.assertTrue(process_result.success, f"Process failed: {process_result.error}")
+        self.assertEqual(len(process_result.processed_files), 1, "Should have one processed file")
+        self.assertEqual(process_result.processed_files[0], download_result.local_path, "Should return downloaded file")
 
-            result = self.processor.process(download_result, parse_result)
+        # Step 3: Get upload file list
+        upload_files = self.processor.get_upload_files(process_result, parse_result)
+        self.assertEqual(len(upload_files), 1, "Should have one file for upload")
+        self.assertEqual(upload_files[0]['local_path'], download_result.local_path)
+        self.assertTrue(upload_files[0]['remote_path'].startswith('/'))
+        self.assertTrue(upload_files[0]['remote_path'].endswith('.pdf'))
 
-            # PDF files don't need processing, so should return success
-            self.assertTrue(result.success)
-            self.assertEqual(result.processed_files, [temp_file], "Should return the PDF file for upload")
-            self.assertIsNone(result.error)
-        finally:
-            # Clean up the temporary file
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+        # Verify the downloaded file is a valid PDF
+        with open(download_result.local_path, 'rb') as f:
+            header = f.read(4)
+            self.assertEqual(header, b'%PDF', "Downloaded file should be a valid PDF")
+
+        print(f"Complete workflow successful:")
+        print(f"  - Downloaded: {download_result.filename} ({download_result.file_size / 1024:.2f} KB)")
+        print(f"  - Local path: {download_result.local_path}")
+        print(f"  - Upload path: {upload_files[0]['remote_path']}")
 
     def test_get_upload_files_returns_downloaded_file(self):
-        """Test get_upload_files returns the downloaded file"""
+        """Test get_upload_files returns the downloaded file with real PDF context"""
         parse_result = ParseResult(
             message_type='pdf_link',
-            unique_identifier='test',
+            unique_identifier='https://franklintempletonprod.widen.net/content/glbkkcqozl/pdf/FTIMD-8-14-26-micro-over-macro.pdf',
             source='feishu',
-            pdf_url='https://example.com/test.pdf'
+            pdf_url='https://franklintempletonprod.widen.net/content/glbkkcqozl/pdf/FTIMD-8-14-26-micro-over-macro.pdf'
         )
 
         # Create a fake process result for testing
         process_result = ProcessResult(
             success=True,
-            processed_files=['/fake/downloaded/test.pdf']
+            processed_files=['/fake/downloaded/FTIMD-8-14-26-micro-over-macro.pdf']
         )
 
         result = self.processor.get_upload_files(process_result, parse_result)
 
         # Should return list of upload file dictionaries
         self.assertEqual(len(result), 1, "Should return one file for upload")
-        self.assertEqual(result[0]['local_path'], '/fake/downloaded/test.pdf', "Local path should match")
+        self.assertEqual(result[0]['local_path'], '/fake/downloaded/FTIMD-8-14-26-micro-over-macro.pdf', "Local path should match")
         self.assertTrue(result[0]['remote_path'].startswith('/'), "Remote path should start with /")
         self.assertTrue(result[0]['remote_path'].endswith('.pdf'), "Remote filename should end with .pdf")
+        # Verify remote filename includes timestamp pattern
+        self.assertRegex(result[0]['remote_path'], r'/\d{8}_\d{6}_FTIMD-8-14-26-micro-over-macro\.pdf', "Remote path should have timestamp prefix")
 
     def test_cleanup_removes_temporary_directory(self):
         """Test cleanup method removes temporary directory"""
