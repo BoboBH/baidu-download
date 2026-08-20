@@ -89,7 +89,7 @@ class Settings:
         self.wxchat_wewe_db_name = os.getenv('WXCHAT_WEWE_DB_NAME', '')
         self.wxchat_sftp_remote_path = os.getenv('WXCHAT_SFTP_REMOTE_PATH', '/wxchat')
         self.wxchat_base_url = os.getenv('WXCHAT_BASE_URL', 'https://mp.weixin.qq.com/s/')
-        self.wxchat_pdf_timeout = self._get_int_env('WXCHAT_PDF_TIMEOUT', default=60)
+        self.wxchat_pdf_timeout = self._get_int_env('WXCHAT_PDF_TIMEOUT', default=300)
         self.wxchat_image_wait_time = self._get_int_env('WXCHAT_IMAGE_WAIT_TIME', default=20)
         self.wxchat_download_delay = self._get_int_env('WXCHAT_DOWNLOAD_DELAY', default=5)
         self.wxchat_max_days = self._get_int_env('WXCHAT_MAX_DAYS', default=30)
