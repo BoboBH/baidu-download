@@ -315,9 +315,9 @@ class DatabaseRepository:
         try:
             sql = """
             INSERT INTO message_process_log
-            (message_hash, original_message, share_link, folder_name, extraction_code, source, process_status,
-             error_message, execution_summary_id, processing_time_ms)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (message_hash, original_message, share_link, folder_name, extraction_code, source, message_type,
+             raw_message, file_info, process_status, error_message, execution_summary_id, processing_time_ms)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
 
             cursor.execute(sql, (
@@ -327,6 +327,9 @@ class DatabaseRepository:
                 log.folder_name,
                 log.extraction_code,
                 log.source,
+                log.message_type,
+                log.raw_message,
+                log.file_info,
                 log.process_status,
                 log.error_message,
                 log.execution_summary_id,
@@ -376,6 +379,9 @@ class DatabaseRepository:
                     folder_name=row['folder_name'],
                     extraction_code=row.get('extraction_code'),
                     source=row.get('source', 'feishu'),
+                    message_type=row.get('message_type', 'baidupan'),
+                    raw_message=row.get('raw_message'),
+                    file_info=row.get('file_info'),
                     process_status=row['process_status'],
                     error_message=row['error_message'],
                     execution_summary_id=row.get('execution_summary_id'),

@@ -11,6 +11,9 @@ class MessageProcessLog:
     folder_name: Optional[str] = None
     extraction_code: Optional[str] = None
     source: str = 'feishu'  # 新增：消息来源，默认 feishu
+    message_type: str = 'baidupan'  # 消息类型：baidupan/pdf_link/dingtalk_pdf/dingtalk_zip
+    raw_message: Optional[str] = None  # 原始消息内容（JSON格式）
+    file_info: Optional[str] = None  # 文件元数据信息（JSON格式）
     process_status: str = 'pending'  # pending, processing, success, failed, critical_error
     error_message: Optional[str] = None
     execution_summary_id: Optional[int] = None
