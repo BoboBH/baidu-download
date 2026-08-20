@@ -118,8 +118,32 @@ class MessageReceiver:
                         })
                         continue
 
-                    # 验证解析结果结构
-                    if not hasattr(parse_result, 'folder_name') or not hasattr(parse_result, 'share_link') or not hasattr(parse_result, 'extraction_code'):
+                    # 验证解析结果结构 - 支持多种消息类型
+                    # 每种消息类型有不同的必需字段
+                    has_required_fields = False
+                    if parse_result.is_baidupan():
+                        # 百度网盘消息需要 share_link 和 extraction_code
+                        has_required_fields = (hasattr(parse_result, 'share_link') and
+                                              hasattr(parse_result, 'extraction_code'))
+                    elif parse_result.is_pdf_link():
+                        # PDF链接消息需要 pdf_url
+                        has_required_fields = hasattr(parse_result, 'pdf_url')
+                    elif parse_result.is_dingtalk_file():
+                        # 钉钉文件消息需要 file_id, space_id, download_code, file_name
+                        has_required_fields = (hasattr(parse_result, 'file_id') and
+                                              hasattr(parse_result, 'space_id') and
+                                              hasattr(parse_result, 'download_code') and
+                                              hasattr(parse_result, 'file_name'))
+                    else:
+                        # 未知消息类型
+                        self.logger.debug(f"Unknown message type: {parse_result.message_type}")
+                        results['filtered_messages'].append({
+                            'reason': 'Unknown message type',
+                            'content': content[:50]
+                        })
+                        continue
+
+                    if not has_required_fields:
                         self.logger.debug(f"Invalid parse result structure for message: {content[:50]}...")
                         results['filtered_messages'].append({
                             'reason': 'Invalid parse structure',
@@ -127,39 +151,89 @@ class MessageReceiver:
                         })
                         continue
 
-                    # 计算文件唯一键（现在只基于 share_link）
+                    # 计算文件唯一键 - 根据消息类型使用不同的标识符
                     message_hash = self.message_parser.calculate_file_key(
-                        parse_result.folder_name,  # 现在可以为None
-                        parse_result.share_link
+                        parse_result.message_type,
+                        parse_result.unique_identifier
                     )
 
-                    # 检查重复文件（相同 share_link）
+                    # 检查重复文件（基于消息哈希）
                     existing_message = self.db_repo.get_message_by_hash(message_hash)
                     if existing_message:
-                        self.logger.info(f"Duplicate message found: {parse_result.share_link[:50]}...")
+                        # 根据消息类型显示不同的重复信息
+                        if parse_result.is_baidupan():
+                            display_info = parse_result.share_link[:50] if parse_result.share_link else "unknown"
+                        elif parse_result.is_pdf_link():
+                            display_info = parse_result.pdf_url[:50] if parse_result.pdf_url else "unknown"
+                        elif parse_result.is_dingtalk_file():
+                            display_info = parse_result.file_name if parse_result.file_name else "unknown"
+                        else:
+                            display_info = "unknown"
+
+                        logger.info(f"Duplicate message found: {display_info}...")
                         results['duplicate_messages'].append({
-                            'folder_name': parse_result.folder_name,
+                            'message_type': parse_result.message_type,
+                            'display_info': display_info,
                             'existing_status': existing_message.process_status
                         })
                         continue
 
-                    # 插入新消息到数据库（状态为 pending）
-                    message_log = MessageProcessLog(
-                        message_hash=message_hash,
-                        original_message=content,
-                        share_link=parse_result.share_link,
-                        folder_name=parse_result.folder_name,
-                        extraction_code=parse_result.extraction_code,
-                        source=parse_result.source,  # 新增：消息来源
-                        process_status="pending"  # 待处理状态
-                    )
+                    # 插入新消息到数据库（状态为 pending）- 支持多种消息类型
+                    if parse_result.is_baidupan():
+                        # 百度网盘消息
+                        message_log = MessageProcessLog(
+                            message_hash=message_hash,
+                            original_message=content,
+                            share_link=parse_result.share_link,
+                            folder_name=parse_result.folder_name,
+                            extraction_code=parse_result.extraction_code,
+                            source=parse_result.source,
+                            process_status="pending"
+                        )
+                        display_name = parse_result.folder_name if parse_result.folder_name else "BaiduPan链接"
+
+                    elif parse_result.is_pdf_link():
+                        # PDF链接消息
+                        message_log = MessageProcessLog(
+                            message_hash=message_hash,
+                            original_message=content,
+                            share_link=parse_result.pdf_url,  # 将PDF URL存储在share_link字段
+                            folder_name=None,
+                            extraction_code=None,
+                            source=parse_result.source,
+                            process_status="pending"
+                        )
+                        display_name = parse_result.pdf_url[:50] if parse_result.pdf_url else "PDF链接"
+
+                    elif parse_result.is_dingtalk_file():
+                        # 钉钉文件消息
+                        message_log = MessageProcessLog(
+                            message_hash=message_hash,
+                            original_message=f"钉钉文件: {parse_result.file_name}",
+                            share_link=None,  # 钉钉文件没有share_link
+                            folder_name=parse_result.file_name,  # 使用文件名作为folder_name
+                            extraction_code=parse_result.download_code,  # 将download_code存储在extraction_code字段
+                            source=parse_result.source,
+                            process_status="pending"
+                        )
+                        display_name = parse_result.file_name
+
+                    else:
+                        # 其他未知消息类型，不应到达这里
+                        logger.warning(f"Unknown message type during insertion: {parse_result.message_type}")
+                        results['filtered_messages'].append({
+                            'reason': 'Unknown message type',
+                            'content': content[:50]
+                        })
+                        continue
+
                     message_id = self.db_repo.insert_message_log(message_log)
 
-                    self.logger.info(f"✅ New message inserted: {parse_result.folder_name} (ID: {message_id})")
+                    logger.info(f"✅ New message inserted: {display_name} (ID: {message_id})")
                     results['new_messages'].append({
                         'message_id': message_id,
-                        'folder_name': parse_result.folder_name,
-                        'share_link': parse_result.share_link
+                        'message_type': parse_result.message_type,
+                        'display_name': display_name
                     })
 
                 except Exception as e:

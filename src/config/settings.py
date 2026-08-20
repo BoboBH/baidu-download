@@ -77,6 +77,12 @@ class Settings:
         self.max_retries = self._get_int_env('MAX_RETRIES', default=3)
         self.concurrent_uploads = self._get_int_env('CONCURRENT_UPLOADS', default=1)
 
+        # 重试机制配置 (Task 7: 错误处理和重试机制完善)
+        self.retry_max_attempts = self._get_int_env('RETRY_MAX_ATTEMPTS', default=3)
+        self.retry_base_delay_ms = self._get_int_env('RETRY_BASE_DELAY_MS', default=1000)
+        self.retry_max_delay_ms = self._get_int_env('RETRY_MAX_DELAY_MS', default=16000)
+        self.retry_exponential_base = self._get_int_env('RETRY_EXPONENTIAL_BASE', default=2)
+
         # PDF文件大小限制（MB）
         self.max_pdf_size_mb = self._get_int_env('MAX_PDF_SIZE_MB', default=200)
 
@@ -164,6 +170,16 @@ class Settings:
         # 验证消息重试次数范围（应该是1-100）
         if not (1 <= self.max_message_retries <= 100):
             raise ConfigError(f"MESSAGE_MAX_RETRIES must be between 1 and 100: {self.max_message_retries}")
+
+        # 验证重试机制配置 (Task 7: 错误处理和重试机制完善)
+        if not (1 <= self.retry_max_attempts <= 10):
+            raise ConfigError(f"RETRY_MAX_ATTEMPTS must be between 1 and 10: {self.retry_max_attempts}")
+        if not (100 <= self.retry_base_delay_ms <= 60000):
+            raise ConfigError(f"RETRY_BASE_DELAY_MS must be between 100 and 60000: {self.retry_base_delay_ms}")
+        if self.retry_max_delay_ms < self.retry_base_delay_ms:
+            raise ConfigError(f"RETRY_MAX_DELAY_MS ({self.retry_max_delay_ms}) must be >= RETRY_BASE_DELAY_MS ({self.retry_base_delay_ms})")
+        if not (2 <= self.retry_exponential_base <= 5):
+            raise ConfigError(f"RETRY_EXPONENTIAL_BASE must be between 2 and 5: {self.retry_exponential_base}")
 
         # 验证微信配置（如果启用）
         if self.wxchat_enabled:

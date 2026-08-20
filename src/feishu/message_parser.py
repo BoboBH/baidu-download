@@ -59,8 +59,8 @@ class MessageParser:
             ParseResult object for the first matching parser
             None if no parser matches the message
         """
-        if not content:
-            logger.warning("Empty message content")
+        if not content and not message_data:
+            logger.warning("Empty message content and no message data")
             return None
 
         # Normalize content

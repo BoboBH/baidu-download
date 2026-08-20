@@ -578,10 +578,11 @@ class BaiduClient:
                 else:
                     # 继续收集ls输出的行，直到遇到空行或新的命令提示
                     ls_output_lines.insert(0, line)
-                    if line.startswith('#') or '----' in line or '当前目录' in line:
+                    # 🔥 修复：识别所有表头行（包括"当前目录"、"当前路径"等）
+                    if line.startswith('#') or '----' in line or '当前目录' in line or '当前路径' in line or line.startswith('当前路径'):
                         continue
                     # 如果遇到看起来像命令输出的行，停止收集
-                    if line and not line.startswith('#') and '----' not in line and '当前目录' not in line:
+                    if line and not line.startswith('#') and '----' not in line and '当前目录' not in line and '当前路径' not in line and not line.startswith('当前路径'):
                         if not re.search(r'\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}', line):
                             break
 
@@ -1049,7 +1050,7 @@ class BaiduClient:
             if not line_stripped or line_stripped.startswith('#') or '----' in line_stripped or '当前目录' in line_stripped:
                 continue
 
-            # 🔥 基于用户实际格式的解析：查找以 / 结尾的文件夹
+            # 🔥 修复：移除格式限制，任何以/结尾的都识别为文件夹
             # 格式：序号  -  日期时间  文件夹名/
             if '/' in line_stripped and line_stripped.endswith('/'):
                 # 提取文件夹名（去掉末尾的/）
@@ -1057,8 +1058,9 @@ class BaiduClient:
                 for part in reversed(parts):
                     if part.endswith('/'):
                         folder_name = part.rstrip('/')
-                        # 验证是数字格式的文件夹（如260726）
-                        if folder_name.isdigit() and len(folder_name) == 6:
+                        # 🔥 关键修复：移除硬编码限制，接受任何有效的文件夹名
+                        # 不再限制必须是6位数字，支持 quant-26-3, reports-2024, test_folder 等格式
+                        if folder_name and folder_name not in ['.', '..']:
                             folders.append(folder_name)
                             logger.info(f"✅ Line {line_num}: Found folder: {folder_name}")
                             break

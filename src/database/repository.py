@@ -402,7 +402,8 @@ class DatabaseRepository:
     def update_message_status(self, message_hash: str, status: str,
                              error_message: Optional[str] = None,
                              execution_summary_id: Optional[int] = None,
-                             processing_time_ms: Optional[int] = None) -> bool:
+                             processing_time_ms: Optional[int] = None,
+                             retry_count: Optional[int] = None) -> bool:
         """
         Update message processing status and manage retry count.
 
@@ -412,6 +413,7 @@ class DatabaseRepository:
             error_message: Optional error details
             execution_summary_id: Optional execution summary ID
             processing_time_ms: Optional processing duration
+            retry_count: Optional explicit retry count (if provided, overrides automatic logic)
 
         Returns:
             bool: True if update successful, False if:
@@ -420,7 +422,8 @@ class DatabaseRepository:
                   - Database operation fails
 
         Retry Count Logic:
-            - Increment on status transition to 'failed' or 'critical_error'
+            - If retry_count is explicitly provided, use that value
+            - Otherwise: Increment on status transition to 'failed' or 'critical_error'
             - Reset to 0 on status transition to 'success'
             - Unchanged for 'pending' and 'processing'
         """
@@ -433,7 +436,67 @@ class DatabaseRepository:
         cursor = self.connection.cursor()
 
         try:
-            if status in ['failed', 'critical_error']:
+            # If retry_count is explicitly provided, use it; otherwise use automatic logic
+            if retry_count is not None:
+                # Use explicit retry count
+                if status in ['failed', 'critical_error']:
+                    sql = """
+                    UPDATE message_process_log
+                    SET process_status = %s,
+                        error_message = %s,
+                        execution_summary_id = %s,
+                        processing_time_ms = %s,
+                        retry_count = %s
+                    WHERE message_hash = %s
+                    """
+                    cursor.execute(sql, (
+                        status,
+                        error_message,
+                        execution_summary_id,
+                        processing_time_ms,
+                        retry_count,
+                        message_hash
+                    ))
+                    logger.debug(f"Updated message {message_hash[:8]}... status to {status} (retry count set to {retry_count})")
+                elif status == 'success':
+                    # Reset retry count on success even if explicit value provided
+                    sql = """
+                    UPDATE message_process_log
+                    SET process_status = %s,
+                        error_message = NULL,
+                        execution_summary_id = %s,
+                        processing_time_ms = %s,
+                        retry_count = 0
+                    WHERE message_hash = %s
+                    """
+                    cursor.execute(sql, (
+                        status,
+                        execution_summary_id,
+                        processing_time_ms,
+                        message_hash
+                    ))
+                    logger.debug(f"Updated message {message_hash[:8]}... status to {status} (retry count reset to 0)")
+                else:
+                    # Use explicit retry count for pending/processing
+                    sql = """
+                    UPDATE message_process_log
+                    SET process_status = %s,
+                        error_message = %s,
+                        execution_summary_id = %s,
+                        processing_time_ms = %s,
+                        retry_count = %s
+                    WHERE message_hash = %s
+                    """
+                    cursor.execute(sql, (
+                        status,
+                        error_message,
+                        execution_summary_id,
+                        processing_time_ms,
+                        retry_count,
+                        message_hash
+                    ))
+                    logger.debug(f"Updated message {message_hash[:8]}... status to {status} (retry count set to {retry_count})")
+            elif status in ['failed', 'critical_error']:
                 # Increment retry count for failed statuses
                 sql = """
                 UPDATE message_process_log
@@ -478,13 +541,14 @@ class DatabaseRepository:
                 sql = """
                 UPDATE message_process_log
                 SET process_status = %s,
-                    error_message = NULL,
+                    error_message = %s,
                     execution_summary_id = %s,
                     processing_time_ms = %s
                 WHERE message_hash = %s
                 """
                 cursor.execute(sql, (
                     status,
+                    error_message if status == 'processing' else None,  # Keep error message for processing state
                     execution_summary_id,
                     processing_time_ms,
                     message_hash

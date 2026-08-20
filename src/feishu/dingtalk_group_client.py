@@ -32,6 +32,15 @@ class MessageHandler(CallbackHandler):
             self.notifier = None
             logger.warning("未配置Webhook，消息反馈功能不可用")
 
+        # 初始化统一路由器用于多消息类型处理
+        try:
+            from src.processor.parsers.router import ProcessorRouter
+            self.router = ProcessorRouter(self.settings)
+            logger.info("统一路由器已初始化")
+        except ImportError as e:
+            self.router = None
+            logger.warning(f"无法导入统一路由器: {e}")
+
         # 消息统计
         self.total_received = 0
         self.total_processed = 0
@@ -41,6 +50,7 @@ class MessageHandler(CallbackHandler):
 
         logger.info("MessageHandler initialized successfully")
         logger.info("消息要求：必须@机器人才会处理")
+        logger.info("支持消息类型：百度网盘链接、PDF链接、钉钉文件(PDF/ZIP)")
 
     async def send_feedback(self, conversation_title: str, message_content: str,
                            is_valid: bool, details: str = ""):
@@ -121,6 +131,17 @@ class MessageHandler(CallbackHandler):
         db_repo = None
 
         try:
+            # 🔍 打印原始callback_message完整内容（用于分析文件消息结构）
+            logger.info("=" * 80)
+            logger.info(f"🔍 RAW CALLBACK MESSAGE (Full Content):")
+            logger.info(f"Type: {type(callback_message)}")
+            if hasattr(callback_message, 'data'):
+                logger.info(f"Data Type: {type(callback_message.data)}")
+                logger.info(f"Data Content: {callback_message.data}")
+            if hasattr(callback_message, 'topic'):
+                logger.info(f"Topic: {callback_message.topic}")
+            logger.info("=" * 80)
+
             # 将 CallbackMessage 的 data 转换为 ChatbotMessage
             chatbot_message = ChatbotMessage.from_dict(callback_message.data)
 
@@ -133,13 +154,75 @@ class MessageHandler(CallbackHandler):
             logger.info(f"发送者: {chatbot_message.sender_nick} ({chatbot_message.sender_id})")
             logger.info(f"消息类型: {chatbot_message.message_type}")
 
-            # 只处理文本消息
-            if chatbot_message.message_type != 'text' or not chatbot_message.text:
-                logger.debug(f"Ignoring non-text message: {chatbot_message.message_type}")
+            # 🔍 打印所有消息类型的完整内容
+            logger.info("=" * 80)
+            logger.info(f"🔍 FULL CHATBOT MESSAGE ATTRIBUTES:")
+            for attr in dir(chatbot_message):
+                if not attr.startswith('_'):
+                    try:
+                        value = getattr(chatbot_message, attr)
+                        if not callable(value):
+                            logger.info(f"  {attr}: {value}")
+                    except Exception as e:
+                        logger.info(f"  {attr}: [Error accessing: {e}]")
+            logger.info("=" * 80)
+
+            # 初始化消息数据和内容
+            message_content = ""
+            message_data = None
+
+            # 处理不同类型的消息
+            if chatbot_message.message_type == 'text' and chatbot_message.text:
+                # 文本消息处理
+                message_content = chatbot_message.text.content
+                logger.info(f"📝 文本消息内容: {message_content}")
+                logger.info(f"@机器人: {chatbot_message.is_in_at_list}")
+
+            elif chatbot_message.message_type == 'file' and hasattr(chatbot_message, 'file') and chatbot_message.file:
+                # 文件消息处理 - 支持PDF和ZIP
+                logger.info("📎 文件消息检测到")
+                logger.info("=" * 80)
+                logger.info(f"🔍 DETAILED FILE MESSAGE INFORMATION:")
+
+                file_obj = chatbot_message.file
+                logger.info(f"File attributes: {file_obj.__dict__ if hasattr(file_obj, '__dict__') else file_obj}")
+
+                # 构建文件消息数据结构
+                message_data = {}
+                if hasattr(file_obj, 'file_name'):
+                    message_data['fileName'] = file_obj.file_name
+                if hasattr(file_obj, 'file_id'):
+                    message_data['fileId'] = file_obj.file_id
+                if hasattr(file_obj, 'space_id'):
+                    message_data['spaceId'] = file_obj.space_id
+                if hasattr(file_obj, 'download_code'):
+                    message_data['downloadCode'] = file_obj.download_code
+
+                logger.info(f"提取的文件数据: {message_data}")
+                logger.info("=" * 80)
+
+                # 使用空字符串作为文件消息的文本内容
+                message_content = ""
+
+            else:
+                # 🔍 其他非文本消息类型 - 详细打印所有内容
+                logger.info(f"🔍 非文本消息类型: {chatbot_message.message_type}")
+                logger.info("=" * 80)
+                logger.info(f"🔍 DETAILED MESSAGE CONTENT FOR NON-TEXT MESSAGES:")
+
+                # 打印所有可能的属性
+                for attr in ['text', 'image', 'file', 'audio', 'video', 'rich']:
+                    if hasattr(chatbot_message, attr):
+                        attr_value = getattr(chatbot_message, attr)
+                        logger.info(f"  {attr}: {attr_value}")
+                        if attr_value and hasattr(attr_value, '__dict__'):
+                            logger.info(f"    {attr} attributes: {attr_value.__dict__}")
+
+                logger.info("=" * 80)
+                logger.info(f"⏭️  不支持的消息类型，跳过处理")
                 self.total_skipped += 1
                 return AckMessage.STATUS_OK, "OK"
 
-            message_content = chatbot_message.text.content
             logger.info(f"消息内容: {message_content}")
             logger.info(f"@机器人: {chatbot_message.is_in_at_list}")
 
@@ -151,19 +234,19 @@ class MessageHandler(CallbackHandler):
 
             self.total_at_bot += 1
 
-            # 解析消息内容，指定来源为钉钉
-            parse_result = self.parser.parse_message(message_content, source='dingtalk')
+            # 解析消息内容，支持文本消息和文件消息
+            parse_result = self.parser.parse_message(message_content, source='dingtalk', message_data=message_data)
 
             if not parse_result:
-                logger.info(f"⚠️  消息不包含百度链接，跳过: {message_content[:50]}...")
+                logger.info(f"⚠️  消息不包含支持的链接或文件，跳过: {message_content[:50]}...")
                 self.total_skipped += 1
 
                 # 发送无效消息反馈
                 await self.send_feedback(
                     chatbot_message.conversation_title,
-                    message_content,
+                    message_content if message_content else "文件消息",
                     is_valid=False,
-                    details="消息不包含百度网盘链接或格式错误"
+                    details="消息不包含百度网盘链接、PDF链接或支持的文件类型(PDF/ZIP)"
                 )
                 return AckMessage.STATUS_OK, "OK"
 
@@ -173,11 +256,27 @@ class MessageHandler(CallbackHandler):
                 self.total_skipped += 1
                 return AckMessage.STATUS_OK, "OK"
 
-            # 计算文件唯一键（现在只基于 share_link）
-            message_hash = self.parser.calculate_file_key(
-                parse_result.folder_name,  # 现在可以为None
-                parse_result.share_link
-            )
+            # 计算文件唯一键 - 根据消息类型使用不同的计算方式
+            if parse_result.is_baidupan():
+                # 百度网盘消息：使用share_link
+                message_hash = self.parser.calculate_file_key(
+                    parse_result.message_type,
+                    parse_result.unique_identifier
+                )
+            elif parse_result.is_dingtalk_file():
+                # 钉钉文件消息：使用file_id:space_id (已在unique_identifier中)
+                message_hash = self.parser.calculate_file_key(
+                    parse_result.message_type,
+                    parse_result.unique_identifier
+                )
+            else:
+                # 其他消息类型：使用unique_identifier
+                message_hash = self.parser.calculate_file_key(
+                    parse_result.message_type,
+                    parse_result.unique_identifier
+                )
+
+            logger.info(f"消息唯一键: {message_hash[:8]}... (类型: {parse_result.message_type})")
 
             # 🔑 只在需要时才创建数据库连接
             db_repo = DatabaseRepository(
@@ -204,19 +303,46 @@ class MessageHandler(CallbackHandler):
                 )
                 return AckMessage.STATUS_OK, "OK"
 
-            # 创建消息处理日志
+            # 创建消息处理日志 - 支持多种消息类型
             processing_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
-            message_log = MessageProcessLog(
-                message_hash=message_hash,
-                original_message=message_content,
-                share_link=parse_result.share_link,
-                folder_name=parse_result.folder_name,
-                extraction_code=parse_result.extraction_code,
-                source='dingtalk',
-                process_status='pending',
-                processing_time_ms=processing_time_ms
-            )
+            # 根据消息类型设置不同的字段
+            if parse_result.is_baidupan():
+                # 百度网盘消息
+                message_log = MessageProcessLog(
+                    message_hash=message_hash,
+                    original_message=message_content,
+                    share_link=parse_result.share_link,
+                    folder_name=parse_result.folder_name,
+                    extraction_code=parse_result.extraction_code,
+                    source='dingtalk',
+                    process_status='pending',
+                    processing_time_ms=processing_time_ms
+                )
+            elif parse_result.is_dingtalk_file():
+                # 钉钉文件消息 - 使用新字段
+                message_log = MessageProcessLog(
+                    message_hash=message_hash,
+                    original_message=f"钉钉文件: {parse_result.file_name}",
+                    share_link=None,  # 钉钉文件没有share_link
+                    folder_name=parse_result.file_name,  # 使用文件名作为folder_name
+                    extraction_code=parse_result.download_code,  # 使用download_code作为extraction_code
+                    source='dingtalk',
+                    process_status='pending',
+                    processing_time_ms=processing_time_ms
+                )
+            else:
+                # 其他消息类型（如PDF链接）
+                message_log = MessageProcessLog(
+                    message_hash=message_hash,
+                    original_message=message_content,
+                    share_link=parse_result.share_link,
+                    folder_name=parse_result.folder_name,
+                    extraction_code=parse_result.extraction_code,
+                    source='dingtalk',
+                    process_status='pending',
+                    processing_time_ms=processing_time_ms
+                )
 
             # 存储到数据库
             log_id = db_repo.insert_message_log(message_log)
@@ -225,14 +351,44 @@ class MessageHandler(CallbackHandler):
             logger.info(f"✅ 消息已存储: {parse_result.folder_name} (ID: {log_id})")
             logger.info(f"📊 统计: 收到={self.total_received}, @机器={self.total_at_bot}, 处理={self.total_processed}, 跳过={self.total_skipped}, 错误={self.total_errors}")
 
-            # 发送成功消息反馈
-            folder_display = parse_result.folder_name if parse_result.folder_name else "无文件夹信息"
-            await self.send_feedback(
-                chatbot_message.conversation_title,
-                message_content,
-                is_valid=True,
-                details=f"已记录: {folder_display}"
-            )
+            # 发送成功消息反馈 - 根据消息类型显示不同信息
+            if parse_result.is_baidupan():
+                folder_display = parse_result.folder_name if parse_result.folder_name else "百度网盘链接"
+                await self.send_feedback(
+                    chatbot_message.conversation_title,
+                    message_content,
+                    is_valid=True,
+                    details=f"已记录百度网盘链接: {folder_display}"
+                )
+            elif parse_result.is_dingtalk_pdf():
+                await self.send_feedback(
+                    chatbot_message.conversation_title,
+                    f"钉钉文件: {parse_result.file_name}",
+                    is_valid=True,
+                    details=f"已记录钉钉PDF文件: {parse_result.file_name}"
+                )
+            elif parse_result.is_dingtalk_zip():
+                await self.send_feedback(
+                    chatbot_message.conversation_title,
+                    f"钉钉文件: {parse_result.file_name}",
+                    is_valid=True,
+                    details=f"已记录钉钉ZIP文件: {parse_result.file_name}"
+                )
+            elif parse_result.is_pdf_link():
+                await self.send_feedback(
+                    chatbot_message.conversation_title,
+                    message_content,
+                    is_valid=True,
+                    details=f"已记录PDF链接: {parse_result.pdf_url[:50]}..."
+                )
+            else:
+                # 通用消息
+                await self.send_feedback(
+                    chatbot_message.conversation_title,
+                    message_content if message_content else "文件消息",
+                    is_valid=True,
+                    details=f"已记录消息: {parse_result.message_type}"
+                )
 
             return AckMessage.STATUS_OK, "OK"
 
