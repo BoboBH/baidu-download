@@ -15,15 +15,17 @@ logger = get_logger(__name__)
 class FileProcessor:
     """文件处理协调器，协调整个文件传输流程"""
 
-    def __init__(self, enable_sftp=True):
+    def __init__(self, enable_sftp=True, force_reprocess=False):
         """
         初始化处理器
 
         Args:
             enable_sftp: 是否启用SFTP上传（默认True）
+            force_reprocess: 是否强制重新处理所有文件（默认False）
         """
         self.settings = Settings()
         self.enable_sftp = enable_sftp
+        self.force_reprocess = force_reprocess
 
         # 初始化各个组件
         self.baidu_client = BaiduClient()
@@ -73,15 +75,156 @@ class FileProcessor:
                 logger.error("Baidu login failed")
                 return None
 
-            # 2. 删除已存在的目录
-            logger.info(f"Deleting existing directory if exists: /{folder_name}")
-            self.baidu_client.delete_directory(folder_name)
+            # 2. 如果目录名为None，通过BaiduPCS-Go转存到/temp_report并获取所有目录
+            if folder_name is None:
+                logger.info("=" * 60)
+                logger.info("🔍 FOLDER NAME NOT PROVIDED - STARTING NEW TRANSFER WORKFLOW")
+                logger.info(f"📋 Share Link: {share_link}")
+                logger.info(f"🔑 Extraction Code: {code}")
+                logger.info("🔄 Calling BaiduPCS-Go to transfer to /temp_report and get all folders...")
 
-            # 3. 转存分享链接
-            logger.info(f"Saving share link to /{folder_name}")
-            if not self.baidu_client.save_share_link(share_link, code, folder_name):
-                logger.error("Failed to save share link")
-                return None
+                folders = self.baidu_client.transfer_to_temp_and_get_folders(share_link, code)
+                if not folders:
+                    logger.error("❌ FAILED TO TRANSFER OR NO FOLDERS FOUND")
+                    logger.error(f"❌ Share link: {share_link}")
+                    logger.error(f"❌ Extraction code: {code}")
+                    logger.error("❌ Possible reasons:")
+                    logger.error("   - Invalid share link")
+                    logger.error("   - Wrong extraction code")
+                    logger.error("   - Share link has expired")
+                    logger.error("   - Network connection issues")
+                    logger.error("   - BaiduPCS-Go transfer failed")
+                    logger.info("=" * 60)
+                    return None
+
+                logger.info(f"✅ SUCCESS - Found {len(folders)} folder(s) in /temp_report: {folders}")
+                logger.info("🔄 Processing each folder for PDF files and SFTP upload...")
+                logger.info("=" * 60)
+
+                # 🔥 关键修改：处理/temp_report下的所有文件夹
+                total_success = 0
+                total_failed = 0
+                total_skipped = 0
+                all_pdf_files = []
+
+                for temp_folder in folders:
+                    logger.info(f"📂 Processing folder: /temp_report/{temp_folder}")
+
+                    # 获取该文件夹下的PDF文件列表
+                    pdf_files = self.baidu_client.list_pdf_files(f"temp_report/{temp_folder}")
+
+                    if not pdf_files:
+                        logger.info(f"📂 No PDF files found in /temp_report/{temp_folder}, skipping")
+                        continue
+
+                    logger.info(f"📂 Found {len(pdf_files)} PDF files in /temp_report/{temp_folder}")
+
+                    # 🔥 保持BaiduPCS-Go路径格式：保留//前缀
+                    for pdf_file in pdf_files:
+                        original_path = pdf_file['name']
+
+                        # 确保路径格式正确：//temp_report/260731/file.pdf
+                        if not original_path.startswith('//'):
+                            # 如果路径缺少//前缀，添加它
+                            corrected_path = f"//{original_path}"
+                            logger.debug(f"Path format corrected: {original_path} -> {corrected_path}")
+                            pdf_file['temp_path'] = corrected_path
+                        else:
+                            # 路径格式正确，直接使用
+                            pdf_file['temp_path'] = original_path
+
+                        # 🔥 关键修复：使用实际的文件夹名(temp_folder)作为SFTP上传目录，而不是"temp_report"
+                        pdf_file['sftp_folder'] = temp_folder  # 例如：260816
+                        pdf_file['download_path'] = pdf_file['temp_path']  # 下载路径：//temp_report/260816/file.pdf
+
+                        all_pdf_files.append(pdf_file)
+
+                logger.info(f"📊 Total PDF files found across all folders: {len(all_pdf_files)}")
+
+                if not all_pdf_files:
+                    logger.warning("⚠️  No PDF files found in any folder")
+                    # 清理/temp_report目录
+                    self.baidu_client.delete_directory("temp_report")
+                    return ExecutionSummary(
+                        share_link=share_link,
+                        folder_name="temp_report",
+                        total_files=0,
+                        success_count=0,
+                        failed_count=0,
+                        skipped_count=0,
+                        start_time=start_time,
+                        end_time=datetime.now()
+                    )
+
+                # 处理所有找到的PDF文件
+                success_count = 0
+                failed_count = 0
+                skipped_count = 0
+                total_size = 0
+
+                for pdf_file in all_pdf_files:
+                    # 🔥 关键修复：使用实际的文件夹名进行SFTP上传
+                    result = self._process_single_file(
+                        file_info={
+                            'name': pdf_file['download_path'],  # 下载路径：//temp_report/260816/file.pdf
+                            'size': pdf_file['size'],
+                            'sftp_folder': pdf_file['sftp_folder']  # SFTP上传目录：260816
+                        },
+                        share_link=share_link,
+                        code=code,
+                        folder_name=pdf_file['sftp_folder']  # 使用实际文件夹名而不是"temp_report"
+                    )
+
+                    if result == 'success':
+                        success_count += 1
+                        total_size += pdf_file['size']
+                    elif result == 'failed':
+                        failed_count += 1
+                    else:  # skipped
+                        skipped_count += 1
+
+                # 处理完成后清理/temp_report目录
+                logger.info("🗑️  Cleaning up /temp_report directory...")
+                self.baidu_client.delete_directory("temp_report")
+                logger.info("✅ /temp_report directory cleaned up")
+
+                # 创建执行摘要
+                end_time = datetime.now()
+                summary = ExecutionSummary(
+                    share_link=share_link,
+                    folder_name="temp_report",
+                    total_files=len(all_pdf_files),
+                    success_count=success_count,
+                    failed_count=failed_count,
+                    skipped_count=skipped_count,
+                    start_time=start_time,
+                    end_time=end_time,
+                    total_size=total_size
+                )
+
+                # 保存执行摘要
+                self.db_repo.insert_execution_summary(summary)
+
+                logger.info(f"📊 FINAL PROCESSING RESULTS: {success_count} success, {failed_count} failed, {skipped_count} skipped")
+                logger.info(f"📊 Total size processed: {total_size / (1024*1024):.2f} MB")
+
+                return summary
+
+            # 2. 智能检测并转存文件夹（包含PDF检测逻辑）
+            logger.info(f"Smart folder detection and transfer for: {folder_name}")
+            if not self.baidu_client.detect_and_transfer_folder(share_link, code, folder_name):
+                logger.warning("Folder detection failed or no PDF files found, skipping this share link")
+                # 返回空结果而不是None，因为这是预期的情况（非PDF文件夹）
+                return ExecutionSummary(
+                    share_link=share_link,
+                    folder_name=folder_name,
+                    total_files=0,
+                    success_count=0,
+                    failed_count=0,
+                    skipped_count=0,
+                    start_time=start_time,
+                    end_time=datetime.now()
+                )
 
             # 4. 获取PDF文件列表
             logger.info("Listing PDF files...")
@@ -252,49 +395,83 @@ class FileProcessor:
         logger.debug(f"Local path: {local_path}")
 
         # ===== 去重检查：检查文件是否已经成功上传 =====
+        # 无论是否启用强制重新处理，都查询历史记录用于智能跳过判断
         existing_log = self.db_repo.get_file_log_by_name_and_link(
             file_name=original_file_name,
             share_link=share_link,
             folder_name=folder_name
         )
 
-        if existing_log and existing_log.TRANSFER_STATUS == 'success':
-            # 检查是否需要重新上传：
+        # 如果启用强制重新处理模式，仍然基于历史记录智能判断是否真正需要重新处理
+        if self.force_reprocess:
+            logger.info(f"Force reprocess mode enabled: processing all files regardless of history")
+            # 在强制模式下，仍然检查历史记录用于智能跳过：
             # 1. 如果当前启用SFTP但之前没有upload_time，说明之前是--no-sftp模式，需要重新上传
             # 2. 如果当前禁用SFTP且之前有upload_time，说明之前是SFTP模式，但现在不需要上传，可以跳过
             # 3. 如果当前启用SFTP且之前有upload_time，说明已经上传过，可以跳过
             should_skip = False
 
-            if self.enable_sftp:
-                # 启用SFTP模式：只有当之前真正上传过（有upload_time）时才跳过
-                if existing_log.UPLOAD_TIME is not None:
-                    logger.info(f"File already uploaded to SFTP: {original_file_name}")
-                    logger.info(f"Previous upload time: {existing_log.UPLOAD_TIME}")
+            if existing_log:
+                if self.enable_sftp:
+                    # 启用SFTP模式：只有当之前真正上传过（有upload_time）时才跳过
+                    if existing_log.upload_time is not None:
+                        logger.info(f"File already uploaded to SFTP: {original_file_name}")
+                        logger.info(f"Previous upload time: {existing_log.upload_time}")
+                        logger.info(f"Skipping download and upload")
+                        should_skip = True
+                    else:
+                        logger.info(f"File was processed in --no-sftp mode (no upload_time): {original_file_name}")
+                        logger.info(f"Will upload to SFTP this time")
+                        # 继续处理，会重新下载并上传
+                else:
+                    # 禁用SFTP模式：无论之前是否上传过，都可以跳过
+                    logger.info(f"File already processed (SFTP disabled): {original_file_name}")
                     logger.info(f"Skipping download and upload")
                     should_skip = True
-                else:
-                    logger.info(f"File was processed in --no-sftp mode (no upload_time): {original_file_name}")
-                    logger.info(f"Will upload to SFTP this time")
-                    # 继续处理，会重新下载并上传
             else:
-                # 禁用SFTP模式：无论之前是否上传过，都可以跳过
-                logger.info(f"File already processed (SFTP disabled): {original_file_name}")
-                logger.info(f"Skipping download and upload")
-                should_skip = True
+                logger.debug(f"No existing log found, will process as new file: {original_file_name}")
 
             if should_skip:
                 return 'skipped'
-        elif existing_log and existing_log.TRANSFER_STATUS == 'uploading':
-            logger.warning(f"File is currently being uploaded: {original_file_name}")
-            logger.info(f"Skipping to avoid duplicate operations")
-            return 'skipped'  # 跳过正在上传的文件
-        elif existing_log:
-            # 对于失败、下载中、待处理等状态，需要重新下载并上传
-            logger.info(f"File exists in database with status: {existing_log.TRANSFER_STATUS}")
-            logger.info(f"Will re-download and retry upload for: {original_file_name}")
-            # 继续处理，会重新下载文件
         else:
-            logger.debug(f"No existing log found for: {original_file_name}")
+            # 正常模式：基于历史记录和状态进行去重检查
+            if existing_log and existing_log.transfer_status == 'success':
+                # 检查是否需要重新上传：
+                # 1. 如果当前启用SFTP但之前没有upload_time，说明之前是--no-sftp模式，需要重新上传
+                # 2. 如果当前禁用SFTP且之前有upload_time，说明之前是SFTP模式，但现在不需要上传，可以跳过
+                # 3. 如果当前启用SFTP且之前有upload_time，说明已经上传过，可以跳过
+                should_skip = False
+
+                if self.enable_sftp:
+                    # 启用SFTP模式：只有当之前真正上传过（有upload_time）时才跳过
+                    if existing_log.upload_time is not None:
+                        logger.info(f"File already uploaded to SFTP: {original_file_name}")
+                        logger.info(f"Previous upload time: {existing_log.upload_time}")
+                        logger.info(f"Skipping download and upload")
+                        should_skip = True
+                    else:
+                        logger.info(f"File was processed in --no-sftp mode (no upload_time): {original_file_name}")
+                        logger.info(f"Will upload to SFTP this time")
+                        # 继续处理，会重新下载并上传
+                else:
+                    # 禁用SFTP模式：无论之前是否上传过，都可以跳过
+                    logger.info(f"File already processed (SFTP disabled): {original_file_name}")
+                    logger.info(f"Skipping download and upload")
+                    should_skip = True
+
+                if should_skip:
+                    return 'skipped'
+            elif existing_log and existing_log.transfer_status == 'uploading':
+                logger.warning(f"File is currently being uploaded: {original_file_name}")
+                logger.info(f"Skipping to avoid duplicate operations")
+                return 'skipped'  # 跳过正在上传的文件
+            elif existing_log:
+                # 对于失败、下载中、待处理等状态，需要重新下载并上传
+                logger.info(f"File exists in database with status: {existing_log.transfer_status}")
+                logger.info(f"Will re-download and retry upload for: {original_file_name}")
+                # 继续处理，会重新下载文件
+            else:
+                logger.debug(f"No existing log found for: {original_file_name}")
 
         # ===== 插入新的文件日志 =====
 
@@ -350,9 +527,14 @@ class FileProcessor:
         # 启用SFTP上传
         self.db_repo.update_file_status(log_id, 'uploading', download_time=download_time)
 
+        # 🔥 关键修复：使用实际的文件夹名进行SFTP上传，而不是"temp_report"
+        # 检查是否有自定义的SFTP文件夹名
+        sftp_folder_name = file_info.get('sftp_folder', folder_name)
+        logger.info(f"📂 Using SFTP folder: {sftp_folder_name} (instead of temp_report)")
+
         remote_upload_path = os.path.join(
             self.sftp_client.remote_path,
-            folder_name,
+            sftp_folder_name,  # 使用实际文件夹名，例如：260816
             sftp_file_name  # 使用处理后的文件名上传
         ).replace('\\', '/')
 

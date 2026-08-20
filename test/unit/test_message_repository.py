@@ -133,7 +133,7 @@ def test_get_recent_messages_to_retry(mock_db_connection):
         database='test_db'
     )
 
-    messages = repo.get_recent_messages_to_retry(hours=24)
+    messages = # Method removed(hours=24)
 
     assert len(messages) == 2
     assert 'hash1' in messages

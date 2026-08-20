@@ -495,55 +495,6 @@ class DatabaseRepository:
         finally:
             cursor.close()
 
-    def get_recent_messages_to_retry(self, hours: int = 24) -> List[str]:
-        """
-        获取最近N小时内需要重试的消息
-
-        Args:
-            hours: 时间范围（小时）
-
-        Returns:
-            消息哈希列表
-
-        Filters:
-            - Status must be 'critical_error'
-            - Must be within time window
-            - retry_count must be less than max_message_retries
-        """
-        # Get max retries from settings, default to 10 if settings not available
-        if self.settings and hasattr(self.settings, 'max_message_retries'):
-            max_retries = self.settings.max_message_retries
-        else:
-            max_retries = 10
-            logger.warning("Settings not available, using default max_message_retries=10")
-
-        cursor = self.connection.cursor()
-
-        try:
-            sql = """
-            SELECT message_hash FROM message_process_log
-            WHERE process_status = 'critical_error'
-            AND retry_count < %s
-            AND created_at >= DATE_SUB(NOW(), INTERVAL %s HOUR)
-            ORDER BY created_at ASC
-            """
-
-            cursor.execute(sql, (max_retries, hours))
-            results = cursor.fetchall()
-
-            # Extract message_hash from results
-            eligible_messages = [row['message_hash'] for row in results]
-
-            logger.info(f"Found {len(eligible_messages)} messages to retry from the last {hours} hours")
-
-            return eligible_messages
-
-        except Exception as e:
-            logger.error(f"Failed to get recent messages to retry: {e}")
-            raise
-        finally:
-            cursor.close()
-
     def close(self):
         """关闭数据库连接"""
         if self.connection:

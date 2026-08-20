@@ -187,6 +187,12 @@ def parse_arguments() -> argparse.Namespace:
         help='微信模式：仅同步微信公众号账号信息'
     )
 
+    parser.add_argument(
+        '--force-reprocess',
+        action='store_true',
+        help='强制重新处理：跳过去重检查，重新处理所有文件（包括之前成功的）'
+    )
+
     return parser.parse_args()
 
 def main() -> int:
@@ -407,9 +413,11 @@ def main() -> int:
 
         # 处理模式：专职处理待处理消息
         if args.process_pending:
+            if args.force_reprocess:
+                logger.info("🔄 强制重新处理模式已启用：将处理所有文件，包括之前成功的")
             logger.info("处理模式：开始处理待处理消息...")
 
-            with FileTransferProcessor(settings) as processor:
+            with FileTransferProcessor(settings, force_reprocess=args.force_reprocess) as processor:
                 result = processor.process_pending_messages()
 
                 logger.info("=" * 60)
@@ -428,10 +436,12 @@ def main() -> int:
 
         # 自动模式处理（保留原有的一站式功能）
         if args.auto:
+            if args.force_reprocess:
+                logger.info("🔄 强制重新处理模式已启用：将处理所有文件，包括之前成功的")
             logger.info("自动模式：开始自动处理飞书消息...")
 
             # 创建AutoProcessor并执行
-            processor: AutoProcessor = AutoProcessor(settings)
+            processor: AutoProcessor = AutoProcessor(settings, force_reprocess=args.force_reprocess)
             exit_code: int = processor.process_messages()
 
             return exit_code
@@ -452,9 +462,11 @@ def main() -> int:
             return 0
 
         # 创建处理器并执行
+        if args.force_reprocess:
+            logger.info("🔄 强制重新处理模式已启用：将处理所有文件，包括之前成功的")
         logger.info("开始处理文件传输...")
 
-        with FileProcessor() as processor:
+        with FileProcessor(force_reprocess=args.force_reprocess) as processor:
             summary = processor.process_files(
                 share_link=args.link,
                 code=args.code,

@@ -2,5 +2,5 @@
 百度网盘PDF文件自动传输系统
 """
 
-__version__ = "1.4.4"
+__version__ = "1.4.29"
 __author__ = "baidu-download"

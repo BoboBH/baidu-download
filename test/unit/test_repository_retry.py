@@ -323,139 +323,6 @@ class TestRetryCountUnchanged:
         assert 'error_message = NULL' in sql  # Should clear error message
 
 
-class TestMaxRetryFiltering:
-    """Test suite for max retry filtering in get_recent_messages_to_retry"""
-
-    def test_max_retry_messages_excluded(self, mock_db_connection_with_settings):
-        """Test that messages with retry_count >= max_retries are excluded from retry list"""
-        mock_connection, mock_cursor, mock_settings = mock_db_connection_with_settings
-
-        # Mock database response - only return messages with retry_count < max_retries
-        mock_cursor.fetchall.return_value = [
-            {'message_hash': 'hash_retry_1'},  # retry_count = 0
-            {'message_hash': 'hash_retry_2'},  # retry_count = 5
-            {'message_hash': 'hash_retry_3'},  # retry_count = 9
-            # Note: messages with retry_count >= 10 should NOT be in this list
-        ]
-
-        repo = DatabaseRepository(
-            host='localhost',
-            port=3306,
-            user='root',
-            password='password',
-            database='test_db',
-            settings=mock_settings
-        )
-
-        messages = repo.get_recent_messages_to_retry(hours=24)
-
-        assert len(messages) == 3
-        assert 'hash_retry_1' in messages
-        assert 'hash_retry_2' in messages
-        assert 'hash_retry_3' in messages
-
-        # Verify SQL includes retry count filter
-        call_args = mock_cursor.execute.call_args
-        sql = call_args[0][0]
-        params = call_args[0][1]
-        assert 'retry_count < %s' in sql
-        assert params[0] == 10  # max_message_retries
-
-    def test_max_retry_filtering_with_custom_max(self, mock_db_connection):
-        """Test retry filtering with custom max_message_retries value"""
-        mock_connection, mock_cursor = mock_db_connection
-
-        # Create settings with different max_retries value
-        custom_settings = Mock()
-        custom_settings.max_message_retries = 5
-
-        mock_cursor.fetchall.return_value = [
-            {'message_hash': 'hash_1'},
-        ]
-
-        repo = DatabaseRepository(
-            host='localhost',
-            port=3306,
-            user='root',
-            password='password',
-            database='test_db',
-            settings=custom_settings
-        )
-
-        messages = repo.get_recent_messages_to_retry(hours=24)
-
-        call_args = mock_cursor.execute.call_args
-        params = call_args[0][1]
-        assert params[0] == 5  # Custom max_retries value
-
-    def test_max_retry_filtering_no_messages(self, mock_db_connection_with_settings):
-        """Test that empty list is returned when no messages are eligible for retry"""
-        mock_connection, mock_cursor, mock_settings = mock_db_connection_with_settings
-
-        # Mock empty database response
-        mock_cursor.fetchall.return_value = []
-
-        repo = DatabaseRepository(
-            host='localhost',
-            port=3306,
-            user='root',
-            password='password',
-            database='test_db',
-            settings=mock_settings
-        )
-
-        messages = repo.get_recent_messages_to_retry(hours=24)
-
-        assert messages == []
-        assert len(messages) == 0
-
-    def test_max_retry_filtering_with_time_window(self, mock_db_connection_with_settings):
-        """Test that retry filtering respects the time window parameter"""
-        mock_connection, mock_cursor, mock_settings = mock_db_connection_with_settings
-
-        mock_cursor.fetchall.return_value = [
-            {'message_hash': 'hash_recent'},
-        ]
-
-        repo = DatabaseRepository(
-            host='localhost',
-            port=3306,
-            user='root',
-            password='password',
-            database='test_db',
-            settings=mock_settings
-        )
-
-        messages = repo.get_recent_messages_to_retry(hours=12)
-
-        call_args = mock_cursor.execute.call_args
-        sql = call_args[0][0]
-        params = call_args[0][1]
-        assert 'DATE_SUB(NOW(), INTERVAL %s HOUR)' in sql
-        assert params[1] == 12  # hours parameter
-
-    def test_max_retry_filtering_default_settings_fallback(self, mock_db_connection):
-        """Test that default max_retries (10) is used when settings is None"""
-        mock_connection, mock_cursor = mock_db_connection
-
-        mock_cursor.fetchall.return_value = []
-
-        repo = DatabaseRepository(
-            host='localhost',
-            port=3306,
-            user='root',
-            password='password',
-            database='test_db',
-            settings=None  # No settings provided
-        )
-
-        messages = repo.get_recent_messages_to_retry(hours=24)
-
-        call_args = mock_cursor.execute.call_args
-        params = call_args[0][1]
-        assert params[0] == 10  # Should default to 10
-
-
 class TestConfigurationBoundaries:
     """Test suite for MESSAGE_MAX_RETRIES configuration boundaries"""
 
@@ -829,28 +696,6 @@ class TestDatabaseErrorHandling:
         assert result is False  # No rows affected
         assert mock_cursor.execute.called
 
-    def test_get_recent_messages_to_retry_database_error_raises_exception(self, mock_db_connection_with_settings):
-        """Test that database errors in get_recent_messages_to_retry are propagated"""
-        mock_connection, mock_cursor, mock_settings = mock_db_connection_with_settings
-
-        repo = DatabaseRepository(
-            host='localhost',
-            port=3306,
-            user='root',
-            password='password',
-            database='test_db',
-            settings=mock_settings
-        )
-
-        # Set side_effect after repository is initialized
-        mock_cursor.execute.side_effect = Exception("Database connection lost")
-
-        with pytest.raises(Exception) as exc_info:
-            repo.get_recent_messages_to_retry()
-
-        assert "Database connection lost" in str(exc_info.value)
-
-
 class TestRetryCountIntegration:
     """Test suite for integration scenarios with retry count"""
 
@@ -884,35 +729,6 @@ class TestRetryCountIntegration:
         call_args = mock_cursor.execute.call_args
         sql = call_args[0][0]
         assert 'retry_count = 0' in sql
-
-    def test_message_excluded_after_max_retries(self, mock_db_connection_with_settings):
-        """Test that message is excluded from retry list after reaching max retries"""
-        mock_connection, mock_cursor, mock_settings = mock_db_connection_with_settings
-
-        # Mock response showing only messages below retry limit
-        mock_cursor.fetchall.return_value = [
-            {'message_hash': 'hash_below_limit'},  # retry_count < 10
-        ]
-
-        repo = DatabaseRepository(
-            host='localhost',
-            port=3306,
-            user='root',
-            password='password',
-            database='test_db',
-            settings=mock_settings
-        )
-
-        messages = repo.get_recent_messages_to_retry(hours=24)
-
-        # Only messages with retry_count < 10 should be returned
-        assert len(messages) == 1
-        assert 'hash_below_limit' in messages
-
-        # Verify the SQL filter
-        call_args = mock_cursor.execute.call_args
-        sql = call_args[0][0]
-        assert 'retry_count < %s' in sql
 
 
 class TestParameterValidation:
@@ -955,28 +771,5 @@ class TestParameterValidation:
         assert params[2] == execution_summary_id
         assert params[3] == processing_time_ms
         assert params[4] == message_hash
-
-    def test_get_recent_messages_to_retry_different_time_windows(self, mock_db_connection_with_settings):
-        """Test get_recent_messages_to_retry with different time windows"""
-        mock_connection, mock_cursor, mock_settings = mock_db_connection_with_settings
-        mock_cursor.fetchall.return_value = []
-
-        repo = DatabaseRepository(
-            host='localhost',
-            port=3306,
-            user='root',
-            password='password',
-            database='test_db',
-            settings=mock_settings
-        )
-
-        # Test different time windows
-        for hours in [1, 6, 12, 24, 48, 72]:
-            mock_cursor.execute.reset_mock()
-            repo.get_recent_messages_to_retry(hours=hours)
-
-            call_args = mock_cursor.execute.call_args
-            params = call_args[0][1]
-            assert params[1] == hours
 
 

@@ -269,7 +269,7 @@ class FilenameHandler:
 
         # 🔥 验证提取的文件名不为空
         if not filename:
-            logger.error(f"Failed to extract filename from path: {remote_path}")
+            logger.warning(f"Filename extraction returned empty, using path as fallback: {remote_path[:100]}...")
             # 使用路径本身作为文件名
             filename = remote_path.replace('/', '_').replace('\\', '_')
             if not filename.endswith('.pdf'):

@@ -151,8 +151,8 @@ class MessageHandler(CallbackHandler):
 
             self.total_at_bot += 1
 
-            # 解析消息内容
-            parse_result = self.parser.parse_message(message_content)
+            # 解析消息内容，指定来源为钉钉
+            parse_result = self.parser.parse_message(message_content, source='dingtalk')
 
             if not parse_result:
                 logger.info(f"⚠️  消息不包含百度链接，跳过: {message_content[:50]}...")
@@ -173,8 +173,11 @@ class MessageHandler(CallbackHandler):
                 self.total_skipped += 1
                 return AckMessage.STATUS_OK, "OK"
 
-            # 计算消息哈希（用于去重）
-            message_hash = self.parser.calculate_message_hash(message_content)
+            # 计算文件唯一键（现在只基于 share_link）
+            message_hash = self.parser.calculate_file_key(
+                parse_result.folder_name,  # 现在可以为None
+                parse_result.share_link
+            )
 
             # 🔑 只在需要时才创建数据库连接
             db_repo = DatabaseRepository(
@@ -191,6 +194,14 @@ class MessageHandler(CallbackHandler):
             if existing_message:
                 logger.info(f"♻️  消息已处理，跳过: {message_hash[:8]}...")
                 self.total_skipped += 1
+
+                # 发送重复消息反馈
+                await self.send_feedback(
+                    chatbot_message.conversation_title,
+                    message_content,
+                    is_valid=False,
+                    details=f"重复消息，已存在记录。当前状态: {existing_message.process_status}，已重试: {existing_message.retry_count}次"
+                )
                 return AckMessage.STATUS_OK, "OK"
 
             # 创建消息处理日志
@@ -215,11 +226,12 @@ class MessageHandler(CallbackHandler):
             logger.info(f"📊 统计: 收到={self.total_received}, @机器={self.total_at_bot}, 处理={self.total_processed}, 跳过={self.total_skipped}, 错误={self.total_errors}")
 
             # 发送成功消息反馈
+            folder_display = parse_result.folder_name if parse_result.folder_name else "无文件夹信息"
             await self.send_feedback(
                 chatbot_message.conversation_title,
                 message_content,
                 is_valid=True,
-                details=f"已记录: {parse_result.folder_name}"
+                details=f"已记录: {folder_display}"
             )
 
             return AckMessage.STATUS_OK, "OK"

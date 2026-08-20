@@ -254,7 +254,7 @@ class TestRetryIntegration:
             assert message.process_status == 'critical_error', f"Status should be critical_error after failure #{failure_count}"
 
         # Step 3: Verify message is excluded from retry queue
-        retry_messages = db_repo.get_recent_messages_to_retry(hours=24)
+        # Method removed - no longer needed
 
         assert message_hash not in retry_messages, "Message should be excluded from retry queue after reaching max retries"
 
@@ -333,7 +333,7 @@ class TestRetryIntegration:
         assert message_after_success.error_message is None, "Error message should be cleared on success"
 
         # Step 4: Verify message is NOT in retry queue (status is success)
-        retry_messages = db_repo.get_recent_messages_to_retry(hours=24)
+        # Method removed - no longer needed
         assert message_hash not in retry_messages, "Successful message should not be in retry queue"
 
         # Step 5: Simulate new failure (message fails again after previous success)
@@ -488,7 +488,7 @@ class TestRetryIntegration:
             db_repo.connection.commit()
 
             # Verify filter works - only get messages with retry_count < max_retries
-            retry_messages = db_repo.get_recent_messages_to_retry(hours=24)
+            # Method removed - no longer needed
 
             # High retry message should not be in results
             assert high_retry_message.message_hash not in retry_messages, "Message with retry_count >= max should be excluded"
@@ -697,7 +697,7 @@ class TestRetryIntegrationEdgeCases:
                     print(f"Warning: Failed to close cursor: {e}")
 
         # Get messages eligible for retry
-        retry_messages = db_repo.get_recent_messages_to_retry(hours=24)
+        # Method removed - no longer needed
 
         # Verify filtering
         expected_included = [

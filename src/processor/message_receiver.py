@@ -108,8 +108,8 @@ class MessageReceiver:
                         })
                         continue
 
-                    # 解析消息内容
-                    parse_result = self.message_parser.parse_message(content)
+                    # 解析消息内容，传入消息来源
+                    parse_result = self.message_parser.parse_message(content, source=self.source)
                     if not parse_result:
                         self.logger.debug(f"Failed to parse message: {content[:50]}...")
                         results['filtered_messages'].append({
@@ -127,13 +127,16 @@ class MessageReceiver:
                         })
                         continue
 
-                    # 计算消息哈希
-                    message_hash = self.message_parser.calculate_message_hash(content)
+                    # 计算文件唯一键（现在只基于 share_link）
+                    message_hash = self.message_parser.calculate_file_key(
+                        parse_result.folder_name,  # 现在可以为None
+                        parse_result.share_link
+                    )
 
-                    # 检查重复消息
+                    # 检查重复文件（相同 share_link）
                     existing_message = self.db_repo.get_message_by_hash(message_hash)
                     if existing_message:
-                        self.logger.info(f"Duplicate message found: {parse_result.folder_name}")
+                        self.logger.info(f"Duplicate message found: {parse_result.share_link[:50]}...")
                         results['duplicate_messages'].append({
                             'folder_name': parse_result.folder_name,
                             'existing_status': existing_message.process_status

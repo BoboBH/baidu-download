@@ -27,6 +27,7 @@ class ProcessResult:
     total_files: Optional[int] = None
     success_count: Optional[int] = None
     failed_count: Optional[int] = None
+    skipped_count: Optional[int] = None
     total_size_mb: Optional[float] = None
 
 
@@ -39,6 +40,7 @@ class TransferResult:
     total_files: int
     total_success_files: int
     total_failed_files: int
+    total_skipped_files: int
     total_size_mb: float
     processing_time_ms: int
     details: List[ProcessResult]
@@ -47,14 +49,16 @@ class TransferResult:
 class FileTransferProcessor:
     """文件传输处理器 - 专职处理待处理消息的文件传输"""
 
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(self, settings: Optional[Settings] = None, force_reprocess=False):
         """
         Initialize FileTransferProcessor with required dependencies
 
         Args:
             settings: Configuration object, defaults to new Settings instance
+            force_reprocess: Force reprocess all files regardless of history
         """
         self.settings = settings or Settings()
+        self.force_reprocess = force_reprocess
         self.logger = logger
 
         # Initialize components
@@ -65,7 +69,7 @@ class FileTransferProcessor:
             password=self.settings.db_password,
             database=self.settings.db_name
         )
-        self.file_processor = FileProcessor()
+        self.file_processor = FileProcessor(force_reprocess=self.force_reprocess)
         self.dingtalk_notifier = DingtalkNotifier(self.settings)
 
         self.logger.info("FileTransferProcessor initialized successfully")
@@ -76,14 +80,23 @@ class FileTransferProcessor:
 
         Returns:
             待处理消息列表
+
+        Filters:
+            - Status must be 'pending' or 'failed'
+            - For 'failed' status, retry_count must be less than max_message_retries
+            - 'critical_error' messages are excluded (partial errors, no retry)
         """
         try:
             cursor = self.db_repo.connection.cursor()
 
-            # 修复：同时查询pending和failed状态的消息
+            # Get max retries from settings, default to 10 if not available
+            max_retries = self.settings.max_message_retries if hasattr(self.settings, 'max_message_retries') else 10
+
+            # 查询pending和failed状态的消息，但对failed状态检查retry_count
             sql = """
             SELECT * FROM message_process_log
-            WHERE process_status IN ('pending', 'failed')
+            WHERE process_status = 'pending'
+               OR (process_status = 'failed' AND retry_count < %s)
             ORDER BY
                 CASE
                     WHEN process_status = 'failed' THEN 1  # 优先重试失败的消息
@@ -93,7 +106,7 @@ class FileTransferProcessor:
             LIMIT 10
             """
 
-            cursor.execute(sql)
+            cursor.execute(sql, (max_retries,))
             results = cursor.fetchall()
 
             messages = []
@@ -149,6 +162,7 @@ class FileTransferProcessor:
                     total_files=0,
                     total_success_files=0,
                     total_failed_files=0,
+                    total_skipped_files=0,
                     total_size_mb=0.0,
                     processing_time_ms=0,
                     details=[]
@@ -218,6 +232,7 @@ class FileTransferProcessor:
                         total_files=summary.total_files if summary else 0,
                         success_count=summary.success_count if summary else 0,
                         failed_count=summary.failed_count if summary else 0,
+                        skipped_count=summary.skipped_count if summary else 0,
                         total_size_mb=(summary.total_size / (1024 * 1024)) if summary and summary.total_size else 0.0
                     )
 
@@ -257,6 +272,7 @@ class FileTransferProcessor:
                 total_files=sum(r.total_files or 0 for r in results),
                 total_success_files=sum(r.success_count or 0 for r in results),
                 total_failed_files=sum(r.failed_count or 0 for r in results),
+                total_skipped_files=sum(r.skipped_count or 0 for r in results),
                 total_size_mb=sum(r.total_size_mb or 0 for r in results),
                 processing_time_ms=total_processing_time_ms,
                 details=results
@@ -362,6 +378,7 @@ class FileTransferProcessor:
                 f"- **总文件数**: {result.total_files} 个",
                 f"- **成功文件**: {result.total_success_files} 个",
                 f"- **失败文件**: {result.total_failed_files} 个",
+                f"- **已处理跳过**: {result.total_skipped_files} 个",
                 f"- **总大小**: {result.total_size_mb:.2f} MB",
                 f"- **总耗时**: {result.processing_time_ms / 1000:.2f} 秒"
             ]

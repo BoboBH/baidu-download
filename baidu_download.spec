@@ -12,7 +12,7 @@ PyInstaller配置文件 - 百度网盘PDF文件自动传输系统
   - 所有项目依赖项: pip install -r requirements.txt
 
 作者: baidu-download team
-版本: 1.4.4
+版本: 1.4.11
 """
 
 import os
@@ -36,7 +36,7 @@ datas = [
     (base_path / '.env.example', '.'),
 
     # 数据库初始化脚本
-    (base_path / 'middle' / 'db_init.sql', 'middle'),
+    (base_path / 'release' / 'middle' / 'db_init.sql', 'middle'),
 
     # 微信文章处理数据库脚本
     (base_path / 'database' / 'wxchat_tables.sql', 'database'),
@@ -46,18 +46,17 @@ datas = [
     (base_path / 'database' / 'migrations' / 'migrate_rename_wxchat_tables.sql', 'database/migrations'),
 
     # 百度网盘CLI工具 (如果存在)
-    # (base_path / 'BaiduPCS-Go.exe', '.'),  # 暂时注释，文件不存在
+    # 注意：BaiduPCS-Go由用户环境变量BAIDUPCS_GO_PATH指定，不打包到exe中
 
-    # 百度网盘cookies文件 (重要！用于百度网盘登录认证)
-    (base_path / 'baidu-cookies.txt', '.'),
+    # 百度网盘cookies文件 (由用户运行时提供，不打包到exe中)
 
     # Playwright驱动文件
     (base_path / 'venv/Lib/site-packages/playwright', 'playwright'),
 
     # Playwright浏览器文件（重要！这会让exe增加约300MB）
     # 使用最新版本的Chromium和FFmpeg以确保最佳性能和兼容性
-    (r'C:\Users\bobo\AppData\Local\ms-playwright\chromium-1223', r'ms-playwright\chromium-1223'),
-    (r'C:\Users\bobo\AppData\Local\ms-playwright\ffmpeg-1011', r'ms-playwright\ffmpeg-1011'),
+    (r'C:\Users\bobo\AppData\Local\ms-playwright\chromium-1140', r'ms-playwright\chromium-1140'),
+    (r'C:\Users\bobo\AppData\Local\ms-playwright\ffmpeg-1010', r'ms-playwright\ffmpeg-1010'),
 ]
 
 # 注意: PyInstaller会自动包含所有被导入的Python模块
@@ -172,14 +171,14 @@ exe = EXE(
 # 要启用版本信息，需要创建一个version.txt文件并取消下面的注释:
 #
 # version_info = {
-#     'version': '1.1.5',
+#     'version': '1.4.7',
 #     'description': '百度网盘PDF文件自动传输系统',
 #     'company': 'baidu-download team',
 #     'product': 'Baidu Download Manager',
 #     'copyright': 'Copyright © 2026',
 #     'trademarks': '',
-#     'file_version': '1.1.5.0',
-#     'product_version': '1.1.5.0',
+#     'file_version': '1.4.7.0',
+#     'product_version': '1.4.7.0',
 # }
 #
 # exe = EXE(

@@ -14,12 +14,7 @@ if errorlevel 1 (
 )
 
 echo 开始打包主程序...
-pyinstaller --onefile --name baidu-download ^
-    --add-data "BaiduPCS-Go.exe;." ^
-    --hidden-import paramiko ^
-    --hidden-import pymysql ^
-    --hidden-import dotenv ^
-    main.py
+pyinstaller baidu_download.spec
 
 if errorlevel 1 (
     echo 打包失败！

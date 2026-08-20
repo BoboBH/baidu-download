@@ -26,14 +26,16 @@ class ProcessResult:
 class AutoProcessor:
     """Automatic message processing coordinator for Windows Task Scheduler integration"""
 
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(self, settings: Optional[Settings] = None, force_reprocess=False):
         """
         Initialize AutoProcessor with all required dependencies
 
         Args:
             settings: Configuration object, defaults to new Settings instance
+            force_reprocess: Force reprocess all files regardless of history
         """
         self.settings = settings or Settings()
+        self.force_reprocess = force_reprocess
         self.logger = logger
 
         # Initialize components
@@ -46,7 +48,7 @@ class AutoProcessor:
             password=self.settings.db_password,
             database=self.settings.db_name
         )
-        self.file_processor = FileProcessor()
+        self.file_processor = FileProcessor(force_reprocess=self.force_reprocess)
         self.dingtalk_notifier = DingtalkNotifier(self.settings)
 
         self.logger.info("AutoProcessor initialized successfully")
@@ -114,8 +116,14 @@ class AutoProcessor:
                         self.logger.warning(f"Invalid parse result structure for message: {content[:50]}...")
                         continue
 
-                    # Calculate message hash
-                    message_hash = self.message_parser.calculate_message_hash(content)
+                    # Calculate message hash based on share link only (simplified logic)
+                    if parse_result and parse_result.share_link:
+                        message_hash = self.message_parser.calculate_file_key(
+                            parse_result.folder_name,  # Can be None now
+                            parse_result.share_link
+                        )
+                    else:
+                        message_hash = self.message_parser.calculate_message_hash(content)
 
                     # Check for duplicates
                     if self._is_duplicate_message(message_hash):

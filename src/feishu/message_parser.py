@@ -20,27 +20,13 @@ class ParseResult:
 class MessageParser:
     """消息解析器 - 飞书和钉钉使用统一的解析逻辑"""
 
-    # 统一格式：消息中同时包含6位数字(文件夹名)和百度网盘链接（顺序不限）
+    # 简化的百度网盘链接模式：只识别链接本身
     # 匹配示例：
-    #   - 这是今天的研报260807 https://pan.baidu.com/s/xxx
-    #   - 链接 https://pan.baidu.com/s/xxx 文件夹260723
-    #   - 260723：https://pan.baidu.com/s/xxx
-    #   - 提取码 260723\n链接：https://pan.baidu.com/s/xxx
-    #   - 260723https://pan.baidu.com/s/xxx
-    #   - https://pan.baidu.com/s/xxx 260723
-    # 注意：使用负向断言确保6位数字不被匹配为8位数字的一部分
-    COMBINED_PATTERN = re.compile(
-        r'(?<!\d)(\d{6})(?!\d).*?(https://pan\.baidu\.com/s/[a-zA-Z0-9_-]+)|' +
-        r'(https://pan\.baidu\.com/s/[a-zA-Z0-9_-]+).*?(?<!\d)(\d{6})(?!\d)'
-    )
-
-    # Quant格式：quant-{yyyy}-{m}: URL?pwd=xxx
-    # 匹配示例：
-    #   - quant-2026-3: https://pan.baidu.com/s/xxx?pwd=gqi4
-    #   - quant-2026-10: https://pan.baidu.com/s/xxx?pwd=abcd
-    #   - quant-2026-11: https://pan.baidu.com/s/xxx (pwd可选)
-    QUANT_PATTERN = re.compile(
-        r'(quant-\d{4}-\d{1,2})\s*:\s*(https://pan\.baidu\.com/s/[a-zA-Z0-9_-]+(?:\?pwd=[a-zA-Z0-9]+)?)'
+    #   - https://pan.baidu.com/s/xxx?pwd=gqi4
+    #   - https://pan.baidu.com/s/xxx
+    #   - 任何包含百度网盘链接的消息
+    BAIDU_LINK_PATTERN = re.compile(
+        r'(https://pan\.baidu\.com/s/[a-zA-Z0-9_-]+(?:\?pwd=[a-zA-Z0-9]+)?)'
     )
 
     def __init__(self):
@@ -51,19 +37,23 @@ class MessageParser:
         """
         解析消息内容 - 飞书和钉钉使用统一的解析逻辑
 
-        解析优先级：
-        1. 组合格式：同时包含6位数字(文件夹名)和百度网盘链接（顺序不限）
-        2. 纯链接格式：只有百度网盘链接（使用配置中的提取码作为文件夹名）
+        最终简化目标：
+        1. 识别百度网盘链接（任何包含链接的消息）
+        2. 从 pwd= 参数提取提取码，如果没有则使用默认值"0409"
+        3. 文件夹名称由BaiduPCS-Go获取，不从消息中提取
+
+        支持的格式示例：
+        - https://pan.baidu.com/s/xxx?pwd=gqi4 (提取码=gqi4)
+        - 260817：https://pan.baidu.com/s/xxx (提取码=0409默认值)
+        - 任何包含百度网盘链接的消息
 
         Args:
             content: 消息内容
             source: 消息来源 ('feishu' 或 'dingtalk')
-                    - 钉钉群消息应传入 source='dingtalk'
-                    - 飞书消息应传入 source='feishu'（默认）
-                    ⚠️ 不通过消息格式推断source，由调用者明确指定
 
         Returns:
-            ParseResult 对象，包含提取的链接、提取码、文件夹名和消息来源
+            ParseResult 对象，包含提取的链接、提取码和消息来源
+            folder_name将为None，由后续BaiduPCS-Go获取
             如果无法解析则返回 None
         """
         if not content:
@@ -84,103 +74,35 @@ class MessageParser:
             # 不是JSON格式，直接使用原始内容
             logger.debug("Using raw message content (not JSON)")
 
-        # 1. NEW: Try quant format first (highest priority)
-        quant_match = self.QUANT_PATTERN.search(content)
-        if quant_match:
-            folder_name = quant_match.group(1)  # quant-2026-3
-            share_link = quant_match.group(2).strip()
+        # 1. 识别百度网盘链接
+        link_match = self.BAIDU_LINK_PATTERN.search(content)
+        if not link_match:
+            logger.debug(f"No Baidu link found in message: {content[:50]}...")
+            return None
 
-            # Validate URL was captured
-            if not share_link:
-                logger.warning(f"Quant format matched but no URL found: {content[:50]}...")
-                return None
+        share_link = link_match.group(1).strip()
 
-            # Optional: Validate month range (1-12)
-            month_part = folder_name.split('-')[-1]
-            try:
-                month = int(month_part)
-                if month < 1 or month > 12:
-                    logger.warning(f"Invalid month in folder name: {folder_name}")
-                    return None
-            except ValueError:
-                logger.warning(f"Invalid month format in folder name: {folder_name}")
-                return None
-
-            # Extract pwd from URL or use config default
-            extraction_code = self.extract_pwd_from_url(share_link) or self.settings.message_default_extraction_code
-
-            logger.info(f"Quant format parsed: {folder_name}")
-            logger.debug(f"Extraction code: {extraction_code}, Share link: {share_link}")
-
-            return ParseResult(
-                source=source,
-                share_link=share_link,
-                folder_name=folder_name,
-                extraction_code=extraction_code,
-                raw_content=content
-            )
-
-        # 2. 尝试组合格式（同时有6位数字和链接，顺序不限）
-        combined_match = self.COMBINED_PATTERN.search(content)
-        if combined_match:
-            # COMBINED_PATTERN 有两种匹配形式，需要判断哪个组捕获了内容
-            # 形式1: (\d{6}).*?(https://...)  -> group1=6位数字, group2=链接
-            # 形式2: (https://...).*?(\d{6})  -> group3=链接, group4=6位数字
-            if combined_match.group(1) and combined_match.group(2):
-                # 形式1：数字在前
-                folder_name = combined_match.group(1)  # 260723 - 从消息中提取作为目录名
-                share_link = combined_match.group(2).strip()    # https://... 删除前后空格
-            else:
-                # 形式2：链接在前
-                share_link = combined_match.group(3).strip()   # https://... 删除前后空格
-                folder_name = combined_match.group(4)  # 260723
-
-            extraction_code = self.settings.message_default_extraction_code  # 从配置中取提取码，默认0409
-
-            logger.info(f"Combined format parsed successfully: {folder_name}")
-            logger.debug(f"Using folder name from message: {folder_name}, extraction code from config: {extraction_code}")
-            logger.debug(f"Share link (cleaned): {share_link}")
-            return ParseResult(
-                source=source,  # 使用传入的消息来源参数
-                share_link=share_link,
-                folder_name=folder_name,
-                extraction_code=extraction_code,  # 使用配置中的提取码
-                raw_content=content
-            )
-
-        # 3. 尝试纯链接格式（只有链接，没有目录名）
-        # 匹配任何百度网盘链接，即使没有明确的6位数字
-        link_pattern = re.compile(r'https://pan\.baidu\.com/s/[A-Za-z0-9_-]+')
-        link_match = link_pattern.search(content)
-        if link_match:
-            share_link = link_match.group(0).strip()  # 删除前后空格
-
-            # 验证：如果消息中包含7位或更多位连续数字，拒绝该消息
-            # 这样可以避免将"20260807"错误识别为有效格式
-            long_number_pattern = re.compile(r'\d{7,}')  # 匹配7位或更多数字
-            if long_number_pattern.search(content):
-                logger.debug(f"Rejected message with long number sequence (>=7 digits): {content[:50]}...")
-                return None  # 拒绝包含长数字序列的消息
-
-            # 从配置中取提取码，默认0409
+        # 2. 从URL中提取pwd参数作为提取码，如果没有则使用默认值"0409"
+        extraction_code = self.extract_pwd_from_url(share_link)
+        if not extraction_code:
             extraction_code = self.settings.message_default_extraction_code
-            # 对于没有明确目录名的消息，使用提取码作为目录名
-            folder_name = extraction_code
+            logger.info(f"No pwd in URL, using default extraction code: {extraction_code}")
+        else:
+            logger.info(f"Extracted pwd from URL: {extraction_code}")
 
-            logger.info(f"Link-only format parsed: {folder_name}")
-            logger.debug(f"Using extraction code from config: {extraction_code}, folder name same as extraction code")
-            logger.debug(f"Share link (cleaned): {share_link}")
-            return ParseResult(
-                source=source,  # 使用传入的消息来源参数
-                share_link=share_link,
-                folder_name=folder_name,
-                extraction_code=extraction_code,
-                raw_content=content
-            )
+        # 3. 文件夹名称设为None，由BaiduPCS-Go获取
+        folder_name = None
 
-        # 3. 完全无法识别
-        logger.debug(f"Failed to parse message: {content[:50]}...")
-        return None
+        logger.info(f"Baidu link parsed successfully: link={share_link[:50]}..., code={extraction_code}")
+        logger.debug(f"Folder name will be determined by BaiduPCS-Go API")
+
+        return ParseResult(
+            source=source,
+            share_link=share_link,
+            folder_name=folder_name,  # 由BaiduPCS-Go获取
+            extraction_code=extraction_code,
+            raw_content=content
+        )
 
     def calculate_message_hash(self, content: str) -> str:
         """
@@ -205,26 +127,26 @@ class MessageParser:
         """
         计算文件唯一键（用于去重）
 
-        基于 folder_name + share_link 的组合生成唯一键，确保相同文件不重复处理。
+        现在简化为只基于 share_link 生成唯一键，确保相同链接不重复处理。
+        由于文件夹名称现在由BaiduPCS-Go获取，同一个链接总是对应相同的文件夹。
 
         Args:
-            folder_name: 文件夹名（YYMMDD格式）
+            folder_name: 文件夹名（可选，现在不再用于去重）
             share_link: 百度网盘分享链接
 
         Returns:
             MD5哈希值（32位小写十六进制）
         """
-        if not folder_name or not share_link:
+        if not share_link:
             return ""
 
-        # 标准化链接（删除前后空格）
+        # 标准化链接（删除前后空格和pwd参数）
         clean_link = share_link.strip()
+        # 移除pwd参数，确保 https://pan.baidu.com/s/xxx?pwd=a 和 ?pwd=b 被认为是同一个链接
+        clean_link = clean_link.split('?pwd=')[0]
 
-        # 组合文件夹名和链接
-        combined = f"{folder_name}|{clean_link}"
-
-        # 计算MD5哈希作为唯一键
-        return hashlib.md5(combined.encode('utf-8')).hexdigest()
+        # 计算MD5哈希作为唯一键（只用链接）
+        return hashlib.md5(clean_link.encode('utf-8')).hexdigest()
 
     def extract_pwd_from_url(self, url: str) -> Optional[str]:
         """
