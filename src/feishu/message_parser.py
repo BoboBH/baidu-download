@@ -1,88 +1,119 @@
 import re
 import hashlib
 import json as json_module
-from typing import Optional
-from dataclasses import dataclass
+from typing import Optional, Dict, Any
 from src.config.settings import Settings
 from src.utils.logger import get_logger
+from src.feishu.models import ParseResult
+from src.feishu.parsers.pdf_link_parser import PdfLinkParser
+from src.feishu.parsers.dingtalk_file_parser import DingTalkFileParser
 
 logger = get_logger(__name__)
 
-@dataclass
-class ParseResult:
-    """消息解析结果"""
-    source: str  # 消息来源 'feishu' 或 'dingtalk'
-    share_link: str
-    folder_name: str
-    extraction_code: str
-    raw_content: str
-
 class MessageParser:
-    """消息解析器 - 飞书和钉钉使用统一的解析逻辑"""
+    """
+    Message parser with priority-based routing for multiple message types.
 
-    # 简化的百度网盘链接模式：只识别链接本身
-    # 匹配示例：
+    Supported message types (in priority order):
+    1. Baidu Pan links (baidupan) - highest priority
+    2. PDF links (pdf_link)
+    3. DingTalk files (dingtalk_pdf, dingtalk_zip)
+
+    Priority ensures backwards compatibility - existing Baidu links are
+    processed first before attempting other parsers.
+    """
+
+    # Simplified Baidu Pan link pattern
+    # Matches:
     #   - https://pan.baidu.com/s/xxx?pwd=gqi4
     #   - https://pan.baidu.com/s/xxx
-    #   - 任何包含百度网盘链接的消息
+    #   - Any message containing Baidu Pan links
     BAIDU_LINK_PATTERN = re.compile(
         r'(https://pan\.baidu\.com/s/[a-zA-Z0-9_-]+(?:\?pwd=[a-zA-Z0-9]+)?)'
     )
 
     def __init__(self):
-        """初始化解析器"""
+        """Initialize parser with all sub-parsers."""
         self.settings = Settings()
+        self.pdf_parser = PdfLinkParser()
+        self.dingtalk_parser = DingTalkFileParser()
 
-    def parse_message(self, content: str, source: str = 'feishu') -> Optional[ParseResult]:
+    def parse_message(self, content: str, source: str = 'feishu', message_data: Optional[Dict[str, Any]] = None) -> Optional[ParseResult]:
         """
-        解析消息内容 - 飞书和钉钉使用统一的解析逻辑
+        Parse message content with priority-based routing.
 
-        最终简化目标：
-        1. 识别百度网盘链接（任何包含链接的消息）
-        2. 从 pwd= 参数提取提取码，如果没有则使用默认值"0409"
-        3. 文件夹名称由BaiduPCS-Go获取，不从消息中提取
+        Priority order:
+        1. Baidu Pan links (highest priority) - backwards compatibility
+        2. PDF links
+        3. DingTalk files
 
-        支持的格式示例：
-        - https://pan.baidu.com/s/xxx?pwd=gqi4 (提取码=gqi4)
-        - 260817：https://pan.baidu.com/s/xxx (提取码=0409默认值)
-        - 任何包含百度网盘链接的消息
+        This ensures existing Baidu link functionality is preserved while
+        adding support for new message types.
 
         Args:
-            content: 消息内容
-            source: 消息来源 ('feishu' 或 'dingtalk')
+            content: Message content (text)
+            source: Message source ('feishu', 'dingtalk', etc.)
+            message_data: Optional message data dictionary (for DingTalk files)
 
         Returns:
-            ParseResult 对象，包含提取的链接、提取码和消息来源
-            folder_name将为None，由后续BaiduPCS-Go获取
-            如果无法解析则返回 None
+            ParseResult object for the first matching parser
+            None if no parser matches the message
         """
         if not content:
             logger.warning("Empty message content")
             return None
 
-        # 去除首尾空格
+        # Normalize content
         content = content.strip()
 
-        # 解析JSON格式的消息内容
+        # Parse JSON format if present
         try:
-            # 尝试解析JSON字符串 {"text":"内容"}
             parsed_content = json_module.loads(content)
             if isinstance(parsed_content, dict) and 'text' in parsed_content:
                 content = parsed_content['text']
                 logger.debug(f"Parsed JSON message content: {content}")
         except (json_module.JSONDecodeError, TypeError):
-            # 不是JSON格式，直接使用原始内容
             logger.debug("Using raw message content (not JSON)")
 
-        # 1. 识别百度网盘链接
+        # Priority 1: Try Baidu Pan parser first (backwards compatibility)
+        baidu_result = self._parse_baidupan(content, source)
+        if baidu_result:
+            return baidu_result
+
+        # Priority 2: Try PDF link parser
+        pdf_result = self.pdf_parser.parse(content, source)
+        if pdf_result:
+            return pdf_result
+
+        # Priority 3: Try DingTalk file parser (only if message_data provided)
+        if message_data:
+            dingtalk_result = self.dingtalk_parser.parse(message_data, source)
+            if dingtalk_result:
+                return dingtalk_result
+
+        logger.debug(f"No parser matched message from {source}: {content[:50]}...")
+        return None
+
+    def _parse_baidupan(self, content: str, source: str) -> Optional[ParseResult]:
+        """
+        Parse Baidu Pan links with backwards compatibility.
+
+        Args:
+            content: Message content
+            source: Message source
+
+        Returns:
+            ParseResult with message_type='baidupan' if Baidu link found
+            None if no Baidu link found
+        """
+        # Search for Baidu Pan link
         link_match = self.BAIDU_LINK_PATTERN.search(content)
         if not link_match:
-            logger.debug(f"No Baidu link found in message: {content[:50]}...")
             return None
 
         share_link = link_match.group(1).strip()
 
-        # 2. 从URL中提取pwd参数作为提取码，如果没有则使用默认值"0409"
+        # Extract pwd parameter from URL
         extraction_code = self.extract_pwd_from_url(share_link)
         if not extraction_code:
             extraction_code = self.settings.message_default_extraction_code
@@ -90,18 +121,22 @@ class MessageParser:
         else:
             logger.info(f"Extracted pwd from URL: {extraction_code}")
 
-        # 3. 文件夹名称设为None，由BaiduPCS-Go获取
+        # Folder name will be determined by BaiduPCS-Go API
         folder_name = None
 
+        # Generate unique identifier (share_link without pwd parameter)
+        clean_link = share_link.split('?pwd=')[0]
+        unique_identifier = clean_link
+
         logger.info(f"Baidu link parsed successfully: link={share_link[:50]}..., code={extraction_code}")
-        logger.debug(f"Folder name will be determined by BaiduPCS-Go API")
 
         return ParseResult(
+            message_type='baidupan',
+            unique_identifier=unique_identifier,
             source=source,
             share_link=share_link,
-            folder_name=folder_name,  # 由BaiduPCS-Go获取
             extraction_code=extraction_code,
-            raw_content=content
+            folder_name=folder_name
         )
 
     def calculate_message_hash(self, content: str) -> str:
@@ -123,30 +158,32 @@ class MessageParser:
         # 计算MD5哈希
         return hashlib.md5(normalized.encode('utf-8')).hexdigest()
 
-    def calculate_file_key(self, folder_name: str, share_link: str) -> str:
+    def calculate_file_key(self, message_type: str, unique_identifier: str) -> str:
         """
-        计算文件唯一键（用于去重）
+        Calculate file unique key for deduplication using MD5 hash.
 
-        现在简化为只基于 share_link 生成唯一键，确保相同链接不重复处理。
-        由于文件夹名称现在由BaiduPCS-Go获取，同一个链接总是对应相同的文件夹。
+        The unique key is based on message type and unique identifier to ensure
+        that different message types with the same identifier don't collide.
 
         Args:
-            folder_name: 文件夹名（可选，现在不再用于去重）
-            share_link: 百度网盘分享链接
+            message_type: Type of message (baidupan, pdf_link, dingtalk_pdf, dingtalk_zip)
+            unique_identifier: Unique identifier for the specific message
 
         Returns:
-            MD5哈希值（32位小写十六进制）
+            MD5 hash (32-character lowercase hexadecimal string)
+            Empty string if unique_identifier is not provided
         """
-        if not share_link:
+        if not unique_identifier:
             return ""
 
-        # 标准化链接（删除前后空格和pwd参数）
-        clean_link = share_link.strip()
-        # 移除pwd参数，确保 https://pan.baidu.com/s/xxx?pwd=a 和 ?pwd=b 被认为是同一个链接
-        clean_link = clean_link.split('?pwd=')[0]
+        # Normalize identifier (strip whitespace)
+        clean_identifier = str(unique_identifier).strip()
 
-        # 计算MD5哈希作为唯一键（只用链接）
-        return hashlib.md5(clean_link.encode('utf-8')).hexdigest()
+        # Create composite key: message_type:unique_identifier
+        composite_key = f"{message_type}:{clean_identifier}"
+
+        # Calculate MD5 hash as unique key
+        return hashlib.md5(composite_key.encode('utf-8')).hexdigest()
 
     def extract_pwd_from_url(self, url: str) -> Optional[str]:
         """
