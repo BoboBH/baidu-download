@@ -26,12 +26,14 @@ class DownloadResult:
         file_size: Size of the downloaded file in bytes
         filename: Original filename from the URL
         error: Error message if download failed
+        retryable: Whether the error is retryable (for failed downloads)
     """
     success: bool
     local_path: Optional[str] = None
     file_size: int = 0
     filename: Optional[str] = None
     error: Optional[str] = None
+    retryable: bool = False
 
 
 @dataclass
@@ -130,8 +132,37 @@ class PdfLinkProcessor:
                 headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
             )
 
-            # Check HTTP status
-            response.raise_for_status()
+            # Check HTTP status manually (don't use raise_for_status to handle errors properly)
+            status_code = response.status_code
+            if status_code != 200:
+                error_msg = f"PDF下载HTTP错误: {status_code}"
+                self.logger.error(f"{error_msg} - URL: {pdf_url}")
+
+                # 根据HTTP状态码判断是否可重试
+                if status_code in [404, 403, 401, 413]:  # Not Found, Forbidden, Unauthorized, Payload Too Large
+                    return DownloadResult(
+                        success=False,
+                        error=error_msg,
+                        retryable=False  # 这些错误不可重试
+                    )
+                elif status_code == 429:  # Rate Limited
+                    return DownloadResult(
+                        success=False,
+                        error=error_msg,
+                        retryable=True  # 429可重试
+                    )
+                elif 500 <= status_code < 600:  # 服务器错误可重试
+                    return DownloadResult(
+                        success=False,
+                        error=error_msg,
+                        retryable=True
+                    )
+                else:
+                    return DownloadResult(
+                        success=False,
+                        error=error_msg,
+                        retryable=False
+                    )
 
             # Check content-length header if available
             content_length = response.headers.get('content-length')
@@ -193,40 +224,60 @@ class PdfLinkProcessor:
             self.logger.error(error_msg)
             return DownloadResult(
                 success=False,
-                error=error_msg
+                error=error_msg,
+                retryable=True  # 超时错误可重试
             )
 
         except requests.exceptions.HTTPError as e:
+            # This should rarely be hit since we handle HTTP status codes above,
+            # but included for completeness if raise_for_status is called elsewhere
             status_code = getattr(e.response, 'status_code', 'Unknown') if hasattr(e, 'response') and e.response else 'Unknown'
             error_msg = f"PDF下载HTTP错误: {status_code}"
             self.logger.error(f"{error_msg} - {str(e)}")
+
+            # 根据HTTP状态码判断是否可重试
+            # 4xx错误通常不可重试 (客户端错误)，5xx错误可能可重试 (服务器错误)
+            if status_code in [404, 403, 401, 413, 429]:  # Not Found, Forbidden, Unauthorized, Payload Too Large, Rate Limited
+                retryable = (status_code == 429)  # 只有429(请求限制)可重试
+            elif 500 <= status_code < 600:  # 服务器错误可重试
+                retryable = True
+            else:
+                retryable = False
+
             return DownloadResult(
                 success=False,
-                error=error_msg
+                error=error_msg,
+                retryable=retryable
             )
 
         except requests.exceptions.RequestException as e:
+            # 网络连接错误通常可重试 (连接超时、DNS解析失败等)
             error_msg = f"PDF下载网络错误: {str(e)}"
             self.logger.error(error_msg)
             return DownloadResult(
                 success=False,
-                error=error_msg
+                error=error_msg,
+                retryable=True  # 网络错误可重试
             )
 
         except IOError as e:
+            # IO错误通常不可重试 (磁盘空间不足、权限问题等)
             error_msg = f"PDF下载文件IO错误: {str(e)}"
             self.logger.error(error_msg)
             return DownloadResult(
                 success=False,
-                error=error_msg
+                error=error_msg,
+                retryable=False  # IO错误不可重试
             )
 
         except Exception as e:
+            # 未知错误保守处理，认为不可重试
             error_msg = f"PDF下载未知错误: {str(e)}"
             self.logger.error(error_msg)
             return DownloadResult(
                 success=False,
-                error=error_msg
+                error=error_msg,
+                retryable=False  # 未知错误保守处理为不可重试
             )
 
     def process(self, download_result: DownloadResult, parse_result: ParseResult) -> ProcessResult:
