@@ -77,6 +77,9 @@ class Settings:
         self.max_retries = self._get_int_env('MAX_RETRIES', default=3)
         self.concurrent_uploads = self._get_int_env('CONCURRENT_UPLOADS', default=1)
 
+        # PDF文件大小限制（MB）
+        self.max_pdf_size_mb = self._get_int_env('MAX_PDF_SIZE_MB', default=200)
+
         # 微信公众号配置
         self.wxchat_enabled = os.getenv('WXCHAT_ENABLED', 'false').lower() == 'true'
         self.wxchat_wewe_db_host = os.getenv('WXCHAT_WEWE_DB_HOST', '')
