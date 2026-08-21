@@ -231,15 +231,7 @@ class AutoProcessor:
                                 break
                             else:
                                 # Processing failed - check if we should retry
-                                from dataclasses import dataclass
-                                from typing import Optional
-
-                                @dataclass
-                                class ProcessResult:
-                                    success: bool
-                                    retryable: bool = True
-                                    error_message: Optional[str] = None
-
+                                # 使用文件顶部的ProcessResult类
                                 result = ProcessResult(
                                     success=False,
                                     retryable=True,  # File processing failures are generally retryable
@@ -274,20 +266,12 @@ class AutoProcessor:
                             error_msg = str(e)
                             is_retryable = self._is_exception_retryable(e)
 
-                            from dataclasses import dataclass
-                            from typing import Optional
-
-                            @dataclass
-                            class ProcessResult:
-                                success: bool
-                                retryable: bool
-                                error_message: Optional[str] = None
-
-                            result = ProcessResult(
-                                success=False,
-                                retryable=is_retryable,
-                                error_message=error_msg
-                            )
+                            # 创建简单的重试判断结果
+                            result = type('Result', (), {
+                                'success': False,
+                                'retryable': is_retryable,
+                                'error_message': error_msg
+                            })
 
                             if self.retry_manager.should_retry(result):
                                 # Record retry attempt (increments counter)
@@ -305,7 +289,7 @@ class AutoProcessor:
                                 )
                             else:
                                 # Max retries exceeded or non-retryable error
-                                status = "critical_error"
+                                status = "failed"
                                 error_message = error_msg
                                 self.logger.error(f"Message processing failed after {self.retry_manager.current_retry_count} retries: {error_message}")
                                 break
@@ -375,9 +359,9 @@ class AutoProcessor:
             skipped_count = sum(1 for r in results if r.status == "skipped")
             total_count = len(results)
 
-            # Build notification content (添加钉钉机器人关键词"海外研报")
+            # Build notification content (添加钉钉机器人关键词"Foundry")
             content_lines = [
-                "## 📢 海外研报：百度网盘文件处理报告",
+                "## 📢 Foundry：百度网盘文件处理报告",
                 "",
                 "### 处理结果摘要",
                 "",

@@ -58,7 +58,8 @@ class PdfLinkParser:
             message_type='pdf_link',
             unique_identifier=unique_identifier,
             source=source,
-            pdf_url=pdf_url
+            pdf_url=pdf_url,
+            share_link=pdf_url  # 设置share_link字段，统一使用share_link存储URL
         )
 
     def _is_valid_pdf_url(self, url: str) -> bool:

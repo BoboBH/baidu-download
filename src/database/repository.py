@@ -347,6 +347,58 @@ class DatabaseRepository:
         finally:
             cursor.close()
 
+    def get_message_by_id(self, message_id: int) -> Optional[MessageProcessLog]:
+        """
+        根据消息ID获取消息处理日志
+
+        Args:
+            message_id: 消息ID
+
+        Returns:
+            消息处理日志，如果不存在返回None
+        """
+        cursor = self.connection.cursor()
+
+        try:
+            sql = """
+            SELECT * FROM message_process_log
+            WHERE id = %s
+            """
+
+            cursor.execute(sql, (message_id,))
+            row = cursor.fetchone()
+
+            if row:
+                return MessageProcessLog(
+                    id=row['id'],
+                    message_hash=row['message_hash'],
+                    original_message=row['original_message'],
+                    share_link=row['share_link'],
+                    folder_name=row['folder_name'],
+                    extraction_code=row.get('extraction_code'),
+                    source=row.get('source', 'feishu'),
+                    message_type=row.get('message_type', 'baidupan'),
+                    raw_message=row.get('raw_message'),
+                    file_info=row.get('file_info'),
+                    sender_id=row.get('sender_id'),
+                    sender_nick=row.get('sender_nick'),
+                    process_status=row['process_status'],
+                    error_message=row['error_message'],
+                    execution_summary_id=row.get('execution_summary_id'),
+                    processing_time_ms=row.get('processing_time_ms'),
+                    retry_count=row.get('retry_count', 0),
+                    created_at=row['created_at'],
+                    updated_at=row['updated_at']
+                )
+            else:
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to get message by id: {e}")
+            raise
+        finally:
+            cursor.close()
+
     def get_message_by_hash(self, message_hash: str) -> Optional[MessageProcessLog]:
         """
         根据消息哈希获取消息处理日志
@@ -382,6 +434,8 @@ class DatabaseRepository:
                     message_type=row.get('message_type', 'baidupan'),
                     raw_message=row.get('raw_message'),
                     file_info=row.get('file_info'),
+                    sender_id=row.get('sender_id'),
+                    sender_nick=row.get('sender_nick'),
                     process_status=row['process_status'],
                     error_message=row['error_message'],
                     execution_summary_id=row.get('execution_summary_id'),
@@ -403,7 +457,8 @@ class DatabaseRepository:
                              error_message: Optional[str] = None,
                              execution_summary_id: Optional[int] = None,
                              processing_time_ms: Optional[int] = None,
-                             retry_count: Optional[int] = None) -> bool:
+                             retry_count: Optional[int] = None,
+                             processed_file_count: Optional[int] = None) -> bool:
         """
         Update message processing status and manage retry count.
 
@@ -517,23 +572,25 @@ class DatabaseRepository:
                 logger.debug(f"Updated message {message_hash[:8]}... status to {status} (retry count incremented)")
 
             elif status == 'success':
-                # Reset retry count on success
+                # Reset retry count on success and update processed file count
                 sql = """
                 UPDATE message_process_log
                 SET process_status = %s,
                     error_message = NULL,
                     execution_summary_id = %s,
                     processing_time_ms = %s,
-                    retry_count = 0
+                    retry_count = 0,
+                    processed_file_count = %s
                 WHERE message_hash = %s
                 """
                 cursor.execute(sql, (
                     status,
                     execution_summary_id,
                     processing_time_ms,
+                    processed_file_count if processed_file_count is not None else 0,
                     message_hash
                 ))
-                logger.debug(f"Updated message {message_hash[:8]}... status to {status} (retry count reset to 0)")
+                logger.debug(f"Updated message {message_hash[:8]}... status to {status} (retry count reset to 0, file count: {processed_file_count})")
 
             else:
                 # No retry count change for pending/processing

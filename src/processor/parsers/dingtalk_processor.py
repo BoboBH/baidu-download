@@ -8,6 +8,7 @@ import os
 import zipfile
 import tempfile
 import requests
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List
@@ -15,6 +16,74 @@ from dataclasses import dataclass
 
 from src.feishu.models import ParseResult
 from src.utils.logger import get_logger
+
+
+class DingTalkAuthHelper:
+    """钉钉认证助手 - 处理access_token获取和管理"""
+
+    def __init__(self, app_key, app_secret):
+        """
+        初始化钉钉认证助手
+
+        Args:
+            app_key: 钉钉应用AppKey
+            app_secret: 钉钉应用AppSecret
+        """
+        self.app_key = app_key
+        self.app_secret = app_secret
+        self.access_token = None
+        self.token_expire_time = None
+        self.logger = get_logger(__name__)
+
+    def get_access_token(self):
+        """
+        获取钉钉access_token
+
+        Returns:
+            access_token字符串或None
+        """
+        # 检查是否有有效的token
+        if self._is_token_valid():
+            self.logger.info("使用已缓存的access_token")
+            return self.access_token
+
+        # 获取新的token
+        url = "https://oapi.dingtalk.com/gettoken"
+        params = {
+            "appkey": self.app_key,
+            "appsecret": self.app_secret
+        }
+
+        try:
+            self.logger.info("正在获取钉钉access_token...")
+            response = requests.get(url, params=params, timeout=30)
+            result = response.json()
+
+            if result.get("errcode") == 0:
+                self.access_token = result.get("access_token")
+                # 设置过期时间（当前时间 + 7000秒，提前100秒刷新）
+                import time
+                self.token_expire_time = time.time() + 7000
+
+                self.logger.info(f"✅ 成功获取access_token: {self.access_token[:20]}...")
+                self.logger.info(f"   Token有效期: 7200秒，将在{int((self.token_expire_time - time.time())/60)}分钟后刷新")
+                return self.access_token
+            else:
+                error_msg = result.get('errmsg', '未知错误')
+                self.logger.error(f"❌ 获取access_token失败: {error_msg} (错误代码: {result.get('errcode')})")
+                return None
+
+        except Exception as e:
+            self.logger.error(f"❌ 获取access_token异常: {e}")
+            return None
+
+    def _is_token_valid(self):
+        """检查token是否仍然有效"""
+        if not self.access_token or not self.token_expire_time:
+            return False
+
+        import time
+        return time.time() < self.token_expire_time
 
 
 @dataclass
@@ -93,6 +162,12 @@ class DingTalkFileProcessor:
         self.temp_dir = None
         self.logger = get_logger(__name__)
 
+        # 🔥 新增：初始化钉钉认证助手
+        self.auth_helper = DingTalkAuthHelper(
+            settings.dingtalk_app_key,
+            settings.dingtalk_app_secret
+        )
+
     def can_process(self, message_type: str) -> bool:
         """
         Check if this processor can handle the given message type.
@@ -132,9 +207,98 @@ class DingTalkFileProcessor:
             self.temp_dir = tempfile.mkdtemp(prefix='dingtalk_download_')
             self.logger.debug(f"Created temp directory: {self.temp_dir}")
 
-            # Build DingTalk download URL
-            download_url = f"https://api.dingtalk.com/media/download?downloadCode={download_code}"
-            self.logger.info(f"DingTalk download URL: {download_url[:60]}...")
+            # 🔥 新增：每次下载前先获取access_token
+            self.logger.info("Step 1: Getting DingTalk access_token for file download...")
+            access_token = self.auth_helper.get_access_token()
+
+            if not access_token:
+                return DownloadResult(
+                    success=False,
+                    error="无法获取access_token，无法下载文件",
+                    retryable=True  # access_token获取失败可重试
+                )
+
+            self.logger.info(f"✅ access_token获取成功: {access_token[:20]}...")
+
+            # 🔥 使用正确的钉钉机器人下载流程
+            # 第二步：调用机器人文件下载API（需要access_token）
+            download_info_url = "https://api.dingtalk.com/v1.0/robot/messageFiles/download"  # 🔥 修正：正确的API端点
+            self.logger.info(f"Step 2: Calling DingTalk file download API...")
+
+            download_url = None
+            download_headers = None
+
+            try:
+                # 使用access_token调用下载API
+                info_response = requests.post(
+                    download_info_url,
+                    json={
+                        "downloadCode": download_code,
+                        "robotCode": self.settings.dingtalk_app_key  # 🔥 添加必需的robotCode参数
+                    },
+                    headers={
+                        'x-acs-dingtalk-access-token': access_token,  # 🔥 关键：使用access_token
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Content-Type': 'application/json'
+                    },
+                    timeout=30
+                )
+
+                self.logger.info(f"Download API response: {info_response.status_code}")
+
+                if info_response.status_code == 200:
+                    try:
+                        download_info = info_response.json()
+                        self.logger.info(f"Download info received: {download_info}")
+
+                        # 🔥 修复：直接检查是否有downloadUrl字段
+                        if 'downloadUrl' in download_info and download_info['downloadUrl']:
+                            download_url = download_info['downloadUrl']
+                            self.logger.info(f"✅ Got downloadUrl from API: {download_url[:60]}...")
+
+                            if 'headers' in download_info:
+                                download_headers = download_info['headers']
+                                self.logger.info(f"✅ Got download headers from API")
+                        else:
+                            # API返回错误
+                            error_msg = download_info.get('errorMsg', download_info.get('errorMessage', download_info.get('error', '未知错误')))
+                            self.logger.error(f"❌ API返回错误: {error_msg}")
+                            return DownloadResult(
+                                success=False,
+                                error=f"钉钉API返回错误: {error_msg}",
+                                retryable=False
+                            )
+
+                    except ValueError as json_error:
+                        self.logger.warning(f"Failed to parse JSON response: {json_error}")
+                else:
+                    self.logger.error(f"❌ Download API returned HTTP {info_response.status_code}")
+                    return DownloadResult(
+                        success=False,
+                        error=f"下载API返回HTTP错误: {info_response.status_code}",
+                        retryable=True if 500 <= info_response.status_code < 600 else False
+                    )
+
+            except Exception as e:
+                self.logger.warning(f"Download API call failed: {e}")
+                # 如果API调用失败，无法继续
+                return DownloadResult(
+                    success=False,
+                    error=f"下载API调用失败: {str(e)}",
+                    retryable=True
+                )
+
+            # 检查是否成功获取下载URL
+            if not download_url:
+                error_msg = "未能获取有效的下载URL"
+                self.logger.error(f"❌ {error_msg}")
+                return DownloadResult(
+                    success=False,
+                    error=error_msg,
+                    retryable=False
+                )
+
+            self.logger.info(f"Final download URL: {download_url[:60]}...")
 
             # Determine size limit based on message type
             if message_type == 'dingtalk_pdf':
@@ -145,11 +309,15 @@ class DingTalkFileProcessor:
                 size_limit_desc = f"{self.max_zip_size_mb} MB"
 
             # Start download with stream
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            if download_headers:
+                headers.update(download_headers)
+
             response = requests.get(
                 download_url,
                 stream=True,
                 timeout=self.timeout,
-                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                headers=headers
             )
 
             # Check HTTP status manually (don't use raise_for_status to handle errors properly)
@@ -203,6 +371,52 @@ class DingTalkFileProcessor:
             # Local file path
             local_path = os.path.join(self.temp_dir, file_name)
 
+            # 🔥 关键修复：验证响应是否真正成功
+            if response.status_code != 200:
+                error_msg = f"HTTP错误: {response.status_code}"
+                self.logger.error(f"{error_msg} - Response: {response.text[:200]}")
+                return DownloadResult(
+                    success=False,
+                    error=error_msg,
+                    retryable=True if 500 <= response.status_code < 600 else False
+                )
+
+            # 🔥 检查响应内容类型
+            content_type = response.headers.get('content-type', '')
+            self.logger.info(f"Response Content-Type: {content_type}")
+
+            if message_type == 'dingtalk_pdf' and 'pdf' not in content_type.lower():
+                self.logger.warning(f"⚠️ Content-Type不是PDF: {content_type}")
+
+            # 🔥 检查响应内容长度
+            content_length = response.headers.get('content-length')
+            if content_length:
+                expected_size = int(content_length)
+                if expected_size == 0:
+                    error_msg = "服务器返回内容长度为0，文件可能不存在或无法访问"
+                    self.logger.error(f"{error_msg} - Response: {response.text[:200]}")
+                    return DownloadResult(
+                        success=False,
+                        error=error_msg,
+                        retryable=False
+                    )
+                self.logger.info(f"Expected file size: {expected_size} bytes")
+
+            # 🔥 先检查响应内容，避免下载错误信息
+            response_preview = response.text[:500] if response.text else ""
+            self.logger.info(f"Response preview: {response_preview[:100]}...")
+
+            # 检查是否是错误页面
+            error_indicators = ['error', '错误', 'not found', '404', '403', '401']
+            if any(indicator in response_preview.lower() for indicator in error_indicators):
+                error_msg = f"服务器返回错误页面: {response_preview[:100]}"
+                self.logger.error(error_msg)
+                return DownloadResult(
+                    success=False,
+                    error=error_msg,
+                    retryable=False
+                )
+
             # Download with streaming to handle large files
             downloaded_size = 0
             chunk_size = 8192  # 8KB chunks
@@ -233,7 +447,34 @@ class DingTalkFileProcessor:
 
             # Get actual file size
             actual_size = os.path.getsize(local_path)
-            self.logger.info(f"DingTalk file download completed: {file_name} ({actual_size / (1024*1024):.2f} MB)")
+
+            # 🔥 关键检查：文件大小验证
+            if actual_size == 0:
+                error_msg = "下载的文件大小为0字节，可能是下载失败"
+                self.logger.error(error_msg)
+                return DownloadResult(
+                    success=False,
+                    error=error_msg,
+                    retryable=True
+                )
+
+            # 🔥 对于PDF文件，检查文件头是否有效
+            if message_type == 'dingtalk_pdf':
+                try:
+                    with open(local_path, 'rb') as f:
+                        header = f.read(4)
+                        if header != b'%PDF':
+                            error_msg = f"下载的文件不是有效的PDF格式 (文件头: {header})"
+                            self.logger.error(f"{error_msg} - 文件前100字节: {open(local_path, 'rb').read(100)}")
+                            return DownloadResult(
+                                success=False,
+                                error=error_msg,
+                                retryable=False
+                            )
+                except Exception as e:
+                    self.logger.warning(f"无法验证PDF文件头: {e}")
+
+            self.logger.info(f"✅ DingTalk file download completed: {file_name} ({actual_size / (1024*1024):.2f} MB)")
 
             return DownloadResult(
                 success=True,
@@ -383,8 +624,13 @@ class DingTalkFileProcessor:
         # Create extraction directory
         temp_base_dir = download_result.temp_dir if download_result.temp_dir else self.temp_dir
         extract_dir = os.path.join(temp_base_dir, zip_name)
-        os.makedirs(extract_dir, exist_ok=True)
 
+        # 🔥 关键修复：解压前先删除旧目录，避免重复文件
+        if os.path.exists(extract_dir):
+            self.logger.info(f"Removing old extraction directory: {extract_dir}")
+            shutil.rmtree(extract_dir)
+
+        os.makedirs(extract_dir)
         self.logger.info(f"Extracting ZIP file to: {extract_dir}")
 
         try:
@@ -393,37 +639,104 @@ class DingTalkFileProcessor:
             skipped_large_files = 0
             max_single_size = self.max_single_file_size_mb * 1024 * 1024
 
-            with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
-                # Get file list from ZIP
-                file_list = zip_ref.namelist()
-                self.logger.info(f"ZIP contains {len(file_list)} files")
+            # 🔥 关键修复：需要手动处理钉钉ZIP文件的GBK编码文件名
+            # 钉钉ZIP文件中的中文文件名使用GBK编码存储
+            zip_ref = zipfile.ZipFile(zip_file_path, 'r')
 
-                for file_info in file_list:
-                    # Skip directories
-                    if file_info.endswith('/'):
-                        continue
+            # 获取ZIP文件信息列表（包含原始字节）
+            file_list = zip_ref.infolist()
+            self.logger.info(f"ZIP contains {len(file_list)} files")
 
+            for file_info_obj in file_list:
+                # 🔥 关键修复：智能检测和处理ZIP文件中的中文文件名编码
+                # zipfile已经自动解码了文件名，但可能使用了错误的编码（通常是cp437）
+                wrong_decoded_name = file_info_obj.filename
+
+                # 智能编码检测和修复
+                decoded_name = wrong_decoded_name  # 默认使用原始文件名
+
+                # 检查是否包含非ASCII字符（可能是编码错误的中文）
+                if any(ord(c) > 127 for c in wrong_decoded_name):
                     try:
-                        # Extract file
-                        zip_ref.extract(file_info, extract_dir)
+                        # zipfile默认使用cp437编码，所以先用cp437编码回字节
+                        filename_bytes = wrong_decoded_name.encode('cp437')
 
-                        extracted_file_path = os.path.join(extract_dir, file_info)
-                        file_size = os.path.getsize(extracted_file_path)
-                        total_size += file_size
+                        # 尝试多种常见编码进行解码
+                        encodings_to_try = [
+                            ('gbk', 'GBK (简体中文)'),
+                            ('gb2312', 'GB2312 (简体中文)'),
+                            ('gb18030', 'GB18030 (中文)'),
+                            ('utf-8', 'UTF-8 (国际通用)'),
+                            ('shift_jis', 'Shift JIS (日文)'),
+                            ('euc-kr', 'EUC-KR (韩文)'),
+                            ('big5', 'Big5 (繁体中文)'),
+                        ]
 
-                        # Check single file size limit
-                        if file_size > max_single_size:
-                            self.logger.warning(f"Skipping oversized file: {file_info} ({file_size / (1024*1024):.2f} MB)")
-                            os.remove(extracted_file_path)
-                            skipped_large_files += 1
+                        for encoding, description in encodings_to_try:
+                            try:
+                                decoded_name = filename_bytes.decode(encoding)
+                                # 验证解码结果是否包含有意义的中文字符
+                                if any('一' <= c <= '鿿' for c in decoded_name):
+                                    self.logger.info(f"✅ Successfully detected {description}: {decoded_name}")
+                                    break
+                            except UnicodeDecodeError:
+                                continue
                         else:
-                            extracted_files.append(extracted_file_path)
-                            self.logger.debug(f"Extracted file: {file_info} ({file_size / 1024:.2f} KB)")
+                            # 如果所有编码都失败，使用原始文件名
+                            decoded_name = wrong_decoded_name
+                            self.logger.warning(f"⚠️ Could not detect encoding, using original: {decoded_name}")
 
-                    except Exception as e:
-                        self.logger.warning(f"Failed to extract file {file_info}: {e}")
-                        continue
+                    except (UnicodeDecodeError, UnicodeEncodeError) as e:
+                        # 如果转换失败，使用原始文件名
+                        decoded_name = wrong_decoded_name
+                        self.logger.warning(f"⚠️ Encoding fix failed: {e}, using original: {decoded_name}")
+                else:
+                    # 纯ASCII文件名，直接使用
+                    self.logger.info(f"✅ Pure ASCII filename: {decoded_name}")
 
+                # 跳过目录
+                if decoded_name.endswith('/'):
+                    continue
+
+                self.logger.info(f"Processing file: {decoded_name}")
+
+                try:
+                    # 🔥 关键修复：用原始文件名解压，然后重命名为正确的中文文件名
+                    zip_ref.extract(file_info_obj.filename, extract_dir)
+
+                    # 构建原始文件路径（使用ZIP内部的错误编码文件名）
+                    original_extracted_path = os.path.join(extract_dir, wrong_decoded_name)
+
+                    # 构建正确的文件路径（使用修复后的中文文件名）
+                    correct_file_path = os.path.join(extract_dir, decoded_name)
+
+                    # 如果文件名不同，重命名文件
+                    if wrong_decoded_name != decoded_name and os.path.exists(original_extracted_path):
+                        os.rename(original_extracted_path, correct_file_path)
+                        self.logger.info(f"✅ Renamed: {wrong_decoded_name} -> {decoded_name}")
+                        extracted_file_path = correct_file_path
+                    else:
+                        # 文件名相同或文件不存在，使用原始路径
+                        extracted_file_path = original_extracted_path
+
+                    file_size = os.path.getsize(extracted_file_path)
+                    total_size += file_size
+
+                    # Check single file size limit
+                    if file_size > max_single_size:
+                        self.logger.warning(f"Skipping oversized file: {decoded_name} ({file_size / (1024*1024):.2f} MB)")
+                        os.remove(extracted_file_path)
+                        skipped_large_files += 1
+                    else:
+                        extracted_files.append(extracted_file_path)
+                        self.logger.debug(f"Extracted file: {decoded_name} ({file_size / 1024:.2f} KB)")
+
+                except Exception as e:
+                    self.logger.warning(f"Failed to extract file {decoded_name}: {e}")
+                    continue
+
+            # 🔥 关闭ZIP文件
+            zip_ref.close()
             self.logger.info(f"ZIP extraction completed: {len(extracted_files)} files, total size: {total_size / (1024*1024):.2f} MB")
             if skipped_large_files > 0:
                 self.logger.warning(f"Skipped {skipped_large_files} oversized files")
@@ -486,9 +799,14 @@ class DingTalkFileProcessor:
             for local_path in process_result.processed_files:
                 remote_filename = self._generate_remote_filename(parse_result)
                 remote_path = f"/{remote_filename}"
+
+                # 获取文件大小
+                file_size = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+
                 upload_files.append({
                     'local_path': local_path,
-                    'remote_path': remote_path
+                    'remote_path': remote_path,
+                    'size': file_size  # 添加文件大小
                 })
                 self.logger.info(f"Upload file prepared: {local_path} -> {remote_path}")
 
@@ -498,17 +816,44 @@ class DingTalkFileProcessor:
             original_zip = parse_result.file_name.replace('.zip', '')
 
             for local_path in process_result.processed_files:
+                # 🔥 修复中文文件名乱码：使用URL编码的文件名
+                file_name = os.path.basename(local_path)
+
+                # 检查文件名是否包含非ASCII字符（可能是中文）
+                if any(ord(c) > 127 for c in file_name):
+                    self.logger.info(f"Non-ASCII filename detected: {file_name}")
+
+                    # 尝试修复编码，如果已经是UTF-8则保持原样
+                    try:
+                        # 如果文件名已经是可读的UTF-8，直接使用
+                        file_name.encode('utf-8')
+                        self.logger.info(f"Filename is valid UTF-8: {file_name}")
+                    except (UnicodeEncodeError, UnicodeDecodeError):
+                        # 如果不是有效的UTF-8，使用URL编码作为最后手段
+                        import urllib.parse
+                        encoded_name = urllib.parse.quote(file_name.encode('utf-8', errors='replace'))
+                        self.logger.warning(f"Filename encoding issues, using URL-encoded: {encoded_name}")
+                        file_name = encoded_name
+
                 # Calculate relative path to preserve structure
                 rel_path = Path(local_path).relative_to(extract_dir)
 
                 # Remote path: original_zip/original_structure
                 # Convert to forward slashes for cross-platform compatibility
                 rel_path_str = str(rel_path).replace('\\', '/')
-                remote_path = f"/{original_zip}/{rel_path_str}"
+
+                # 🔥 修复：使用URL编码的文件名
+                safe_rel_path = rel_path_str.replace(file_name, file_name)
+
+                remote_path = f"/{original_zip}/{safe_rel_path}"
+
+                # 获取文件大小
+                file_size = os.path.getsize(local_path) if os.path.exists(local_path) else 0
 
                 upload_files.append({
                     'local_path': local_path,
-                    'remote_path': remote_path
+                    'remote_path': remote_path,
+                    'size': file_size  # 添加文件大小
                 })
                 self.logger.info(f"Upload file prepared: {local_path} -> {remote_path}")
 
@@ -533,22 +878,14 @@ class DingTalkFileProcessor:
 
     def _generate_remote_filename(self, parse_result: ParseResult) -> str:
         """
-        Generate remote filename with timestamp to avoid conflicts.
+        Generate remote filename preserving original name.
 
         Args:
             parse_result: Original parse result
 
         Returns:
-            Remote filename with timestamp prefix
+            Remote filename (original name, no timestamp added)
         """
-        # Get original filename
+        # 🔥 优化：保留原文件名，不加时间戳后缀
         original_filename = parse_result.file_name if parse_result.file_name else 'file.pdf'
-
-        # Generate timestamp
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-        # Combine timestamp with original filename
-        name_without_ext, ext = os.path.splitext(original_filename)
-        remote_filename = f"{name_without_ext}_{timestamp}{ext}"
-
-        return remote_filename
+        return original_filename

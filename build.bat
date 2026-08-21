@@ -14,7 +14,7 @@ if errorlevel 1 (
 )
 
 echo 开始打包主程序...
-pyinstaller baidu_download.spec
+pyinstaller baidu-download.spec
 
 if errorlevel 1 (
     echo 打包失败！

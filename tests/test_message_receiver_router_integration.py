@@ -71,7 +71,7 @@ class TestMessageReceiverRouterIntegration(unittest.TestCase):
 
     @patch('src.processor.message_receiver.DatabaseRepository')
     @patch('src.processor.message_receiver.DingtalkNotifier')
-    @patch('src.processor.message_receiver.FeishuMessageClient')
+    @patch('src.feishu.feishu_client.FeishuMessageClient')
     def test_receiver_handles_pdf_link_messages(self, mock_client, mock_notifier, mock_db):
         """Test receiver handles PDF link messages correctly."""
         from src.processor.message_receiver import MessageReceiver
@@ -100,7 +100,7 @@ class TestMessageReceiverRouterIntegration(unittest.TestCase):
 
     @patch('src.processor.message_receiver.DatabaseRepository')
     @patch('src.processor.message_receiver.DingtalkNotifier')
-    @patch('src.processor.message_receiver.FeishuMessageClient')
+    @patch('src.feishu.feishu_client.FeishuMessageClient')
     def test_receiver_handles_mixed_message_types(self, mock_client, mock_notifier, mock_db):
         """Test receiver handles mixed message types in single batch."""
         from src.processor.message_receiver import MessageReceiver

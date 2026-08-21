@@ -344,9 +344,13 @@ class PdfLinkProcessor:
             remote_filename = self._generate_remote_filename(parse_result)
             remote_path = f"/{remote_filename}"
 
+            # 获取文件大小
+            file_size = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+
             upload_files.append({
                 'local_path': local_path,
-                'remote_path': remote_path
+                'remote_path': remote_path,
+                'size': file_size  # 添加文件大小
             })
 
             self.logger.info(f"Upload file prepared: {local_path} -> {remote_path}")

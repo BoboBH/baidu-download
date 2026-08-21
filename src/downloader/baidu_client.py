@@ -526,13 +526,13 @@ class BaiduClient:
             else:
                 command_chain.append(['transfer', clean_link])
 
-            # 6. 列出当前目录内容
-            command_chain.append(['ls'])
-
             logger.info(f"🔧 Executing {len(command_chain)} commands in single session...")
-            logger.info(f"📋 Command chain: cd / -> rm /{temp_dir_name} -> mkdir {temp_dir_name} -> cd /{temp_dir_name} -> transfer -> ls")
+            logger.info(f"📋 Command chain: cd / -> rm /{temp_dir_name} -> mkdir {temp_dir_name} -> cd /{temp_dir_name} -> transfer")
 
-            # 在同一个BaiduPCS-Go进程中执行所有命令
+            # 🔥 关键修复：先执行transfer命令链，然后延迟，再单独执行ls
+            # 这样可以确保转存操作完全完成，避免ls命令失败
+
+            # 在同一个BaiduPCS-Go进程中执行transfer相关命令
             result = self._run_command_chain(command_chain)
 
             logger.info(f"📊 Command chain return code: {result['returncode']}")
@@ -553,11 +553,25 @@ class BaiduClient:
                 logger.info("=" * 60)
                 return []
 
-            logger.info("✅ Command chain completed successfully")
+            logger.info("✅ Transfer command chain completed successfully")
 
-            # 🔥 从命令链输出中提取ls部分
-            # ls输出通常在stdout的最后部分
-            full_output = result['stdout']
+            # 🔥 关键修复：在transfer后等待10秒，确保转存操作完全完成
+            import time
+            logger.info("⏰ Waiting 10 seconds for transfer operation to complete...")
+            time.sleep(10)
+
+            # 🔥 单独执行ls命令，获取目录内容
+            logger.info("📂 Step 3.5: Executing ls command after delay...")
+            ls_result = self._run_command(['ls'])
+
+            logger.info(f"📊 ls command return code: {ls_result['returncode']}")
+            if ls_result['stdout']:
+                logger.info(f"📂 ls output:\n{ls_result['stdout']}")
+            if ls_result['stderr']:
+                logger.info(f"📂 ls stderr:\n{ls_result['stderr']}")
+
+            # 🔥 使用ls命令的输出进行后续处理
+            full_output = ls_result['stdout']
             logger.info("📂 Step 4: Extracting ls output from command chain results...")
 
             # 查找ls命令的输出（通常是最后一部分）

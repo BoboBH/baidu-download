@@ -205,12 +205,28 @@ class PDFGenerator:
             是否生成成功
         """
         try:
+            # 检测是否在PyInstaller打包环境中
+            import sys
+            is_frozen = getattr(sys, 'frozen', False)
+
             with sync_playwright() as p:
-                # 启动Chromium浏览器
+                # 启动Chromium浏览器 - 修复PyInstaller环境路径问题
                 try:
-                    browser = p.chromium.launch(headless=True)
+                    if is_frozen:
+                        # 在PyInstaller打包环境中，强制使用系统安装的浏览器
+                        system_browser_path = r"C:\Users\bobo\AppData\Local\ms-playwright\chromium-1140\chrome-win\chrome.exe"
+                        logger.info(f"PyInstaller environment detected, using system browser: {system_browser_path}")
+                        browser = p.chromium.launch(
+                            headless=True,
+                            executable_path=system_browser_path
+                        )
+                    else:
+                        # 开发环境，使用默认路径
+                        browser = p.chromium.launch(headless=True)
+
                 except Exception as browser_error:
                     logger.error(f"Chromium浏览器启动失败: {browser_error}")
+                    logger.error(f"尝试的浏览器路径: {p.chromium.executable_path}")
                     logger.error("请确保Playwright浏览器已安装: playwright install chromium")
                     return False
 

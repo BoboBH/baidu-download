@@ -35,6 +35,8 @@ class ProcessResult:
     skipped_count: Optional[int] = None
     total_size_mb: Optional[float] = None
     metadata: Optional[dict] = None  # 元数据（用于微信文章等信息）
+    sender_id: Optional[str] = None  # 发送者ID
+    sender_nick: Optional[str] = None  # 发送者昵称
 
 
 @dataclass
@@ -223,13 +225,15 @@ class FileTransferProcessor:
                                     message.message_hash,
                                     status,
                                     execution_summary_id=summary_id,
-                                    processing_time_ms=processing_time_ms
+                                    processing_time_ms=processing_time_ms,
+                                    processed_file_count=summary.success_count
                                 )
                             else:
                                 self.db_repo.update_message_status(
                                     message.message_hash,
                                     status,
-                                    processing_time_ms=processing_time_ms
+                                    processing_time_ms=processing_time_ms,
+                                    processed_file_count=summary.success_count
                                 )
                         else:
                             status = "failed"
@@ -254,7 +258,9 @@ class FileTransferProcessor:
                             success_count=summary.success_count if summary else 0,
                             failed_count=summary.failed_count if summary else 0,
                             skipped_count=summary.skipped_count if summary else 0,
-                            total_size_mb=(summary.total_size / (1024 * 1024)) if summary and summary.total_size else 0.0
+                            total_size_mb=(summary.total_size / (1024 * 1024)) if summary and summary.total_size else 0.0,
+                            sender_id=message.sender_id if hasattr(message, 'sender_id') else None,
+                            sender_nick=message.sender_nick if hasattr(message, 'sender_nick') else None
                         )
 
                         # 为百度网盘消息发送单条通知
@@ -273,10 +279,11 @@ class FileTransferProcessor:
                         # 计算处理时间
                         processing_time_ms = int((datetime.now() - message_start_time).total_seconds() * 1000)
 
-                        # 根据 RouterResult 更新状态
+                        # 根据 RouterResult 检查是否成功生成文件
                         if router_result.success:
-                            status = "success"
-                            error_message = None
+                            # 🔥 关键修复：先不要设置success状态，等待SFTP上传完成后再决定
+                            # status = "success"  # ❌ 过早设置success状态
+                            # error_message = None
 
                             # 🔥 关键修复：执行 SFTP 上传
                             success_count = 0
@@ -286,9 +293,18 @@ class FileTransferProcessor:
                             if router_result.upload_files:
                                 self.logger.info(f"Starting SFTP upload for {len(router_result.upload_files)} files")
 
-                                # 🔥 关键修复：添加正确的SFTP基础路径
+                                # 🔥 关键修复：使用正确的SFTP基础路径（根据消息类型）
                                 yyyymm = datetime.now().strftime('%Y%m')
-                                sftp_base_path = f"{self.settings.sftp_remote_path}/random/{yyyymm}"
+
+                                # 根据消息类型选择正确的SFTP路径
+                                if parse_result.message_type == 'wxchat-article':
+                                    # wxchat文章: /sftp01/upload/wechat/202608/
+                                    sftp_base_path = f"{self.settings.wxchat_sftp_remote_path}/{yyyymm}"
+                                    self.logger.info(f"Using wxchat SFTP path: {sftp_base_path}")
+                                else:
+                                    # 钉钉PDF/PDF/ZIP: /sftp01/upload/random/202608/
+                                    sftp_base_path = f"{self.settings.sftp_remote_path}/random/{yyyymm}"
+                                    self.logger.info(f"Using random SFTP path: {sftp_base_path}")
 
                                 # 🔥 收集临时目录用于统一清理
                                 temp_dirs_to_cleanup = set()
@@ -350,6 +366,20 @@ class FileTransferProcessor:
 
                                 self.logger.info(f"SFTP upload completed: {success_count} success, {failed_count} failed")
 
+                            # 🔥 关键修复：根据SFTP上传结果决定最终状态
+                            if success_count > 0 and failed_count == 0:
+                                status = "success"
+                                error_message = None
+                                self.logger.info(f"✅ Processing successful: all {success_count} files uploaded")
+                            elif success_count > 0:
+                                status = "success"  # 部分成功也算成功
+                                error_message = f"Partial success: {success_count} uploaded, {failed_count} failed"
+                                self.logger.warning(f"⚠️  Partial success: {success_count} uploaded, {failed_count} failed")
+                            else:
+                                status = "failed"
+                                error_message = f"SFTP upload failed: all {failed_count} files failed to upload"
+                                self.logger.error(f"❌ Processing failed: all {failed_count} files failed to upload")
+
                             # 插入执行摘要（如果有处理结果）
                             if router_result.process_result and hasattr(router_result.process_result, 'total_files'):
                                 from src.database.models import ExecutionSummary
@@ -369,13 +399,16 @@ class FileTransferProcessor:
                                     message.message_hash,
                                     status,
                                     execution_summary_id=summary_id,
-                                    processing_time_ms=processing_time_ms
+                                    processing_time_ms=processing_time_ms,
+                                    processed_file_count=success_count  # 🔥 传递实际成功上传的文件数
                                 )
                             else:
                                 self.db_repo.update_message_status(
                                     message.message_hash,
                                     status,
-                                    processing_time_ms=processing_time_ms
+                                    processing_time_ms=processing_time_ms,
+                                    error_message=error_message,
+                                    processed_file_count=success_count  # 🔥 传递实际成功上传的文件数
                                 )
 
                             # 构建处理结果
@@ -392,7 +425,9 @@ class FileTransferProcessor:
                                 failed_count=failed_count,
                                 skipped_count=0,
                                 total_size_mb=total_size / (1024 * 1024) if total_size else 0.0,
-                                metadata=router_result.metadata  # 传递元数据（用于微信文章等信息）
+                                metadata=router_result.metadata,  # 传递元数据（用于微信文章等信息）
+                                sender_id=message.sender_id if hasattr(message, 'sender_id') else None,
+                                sender_nick=message.sender_nick if hasattr(message, 'sender_nick') else None
                             )
                         else:
                             status = "failed"
@@ -409,10 +444,17 @@ class FileTransferProcessor:
                                 folder_name=message.folder_name or "unknown",
                                 share_link=message.share_link or "unknown",
                                 status=status,
-                                message_type=message.message_type,  # 添加消息类型
+                                message_type=message.message_type,
                                 error_message=error_message,
                                 processing_time_ms=processing_time_ms,
-                                metadata=router_result.metadata  # 传递元数据（失败时也保留）
+                                total_files=0,
+                                success_count=0,
+                                failed_count=0,
+                                skipped_count=0,
+                                total_size_mb=0.0,
+                                metadata=getattr(router_result, 'metadata', None),  # 安全获取元数据
+                                sender_id=message.sender_id if hasattr(message, 'sender_id') else None,
+                                sender_nick=message.sender_nick if hasattr(message, 'sender_nick') else None
                             )
 
                     results.append(process_result)
@@ -424,21 +466,29 @@ class FileTransferProcessor:
 
                 except Exception as e:
                     self.logger.error(f"Error processing message {message.message_hash}: {e}")
-                    # 更新状态为 critical_error
+                    # 更新状态为 failed (支持重试机制)
                     self.db_repo.update_message_status(
                         message.message_hash,
-                        "critical_error",
+                        "failed",
                         error_message=str(e)
                     )
 
-                    results.append(ProcessResult(
+                    # 创建异常处理结果
+                    error_result = ProcessResult(
                         message_id=message.id,
                         folder_name=message.folder_name or "unknown",
                         share_link=message.share_link or "unknown",
-                        status="critical_error",
-                        message_type=message.message_type,  # 添加消息类型
-                        error_message=str(e)
-                    ))
+                        status="failed",
+                        message_type=message.message_type,
+                        error_message=str(e),
+                        metadata=None  # 异常情况下没有元数据
+                    )
+
+                    results.append(error_result)
+
+                    # 🔥 关键修复：异常情况下也要发送通知
+                    self._send_single_message_notification(error_result)
+
                     continue
 
             # 计算总处理时间
@@ -513,9 +563,17 @@ class FileTransferProcessor:
             parse_result.share_link = message.share_link  # 统一使用 share_link
             parse_result.folder_name = message.folder_name
 
-        return parse_result
+        elif message_type == 'wxchat-article':
+            # 微信文章消息
+            parse_result.share_link = message.share_link  # 微信文章URL
+            parse_result.wxchat_article_url = message.share_link  # 设置微信文章URL
+            # 从URL中提取文章ID
+            if message.share_link:
+                article_id = message.share_link.split('/')[-1]
+                parse_result.wxchat_article_id = article_id
+                parse_result.unique_identifier = article_id
 
-    def _create_parse_result_from_message(self, message: MessageProcessLog) -> ParseResult:
+        return parse_result
         """
         从 MessageProcessLog 创建 ParseResult
 
@@ -580,6 +638,13 @@ class FileTransferProcessor:
                 "### 处理结果",
                 ""
             ]
+
+            # 添加发送者信息
+            if hasattr(result, 'sender_nick') and result.sender_nick:
+                content_lines.extend([
+                    f"**发送者**: {result.sender_nick}",
+                    ""
+                ])
 
             # 根据消息类型定制显示内容
             if result.message_type == 'wxchat-article' and hasattr(result, 'metadata') and result.metadata:

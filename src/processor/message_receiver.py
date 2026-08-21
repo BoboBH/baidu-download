@@ -295,9 +295,9 @@ class MessageReceiver:
             True if notification sent successfully, False otherwise
         """
         try:
-            # 构建通知内容（添加钉钉机器人关键词"海外研报"）
+            # 构建通知内容（添加钉钉机器人关键词"Foundry"）
             content_lines = [
-                f"## 📢 海外研报：{self.source.upper()}消息接收报告",
+                f"## 📢 Foundry：{self.source.upper()}消息接收报告",
                 "",
                 "### 接收结果摘要",
                 "",

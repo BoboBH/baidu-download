@@ -170,10 +170,12 @@ class MessageParser:
 
         logger.info(f"识别到微信文章链接: {article_url}")
 
+        # 使用微信文章URL作为share_link，兼容数据库schema
         return ParseResult(
             message_type='wxchat-article',
             unique_identifier=article_id,
             source=source,
+            share_link=article_url,  # 将微信文章URL保存到share_link字段
             wxchat_article_url=article_url,
             wxchat_article_id=article_id
         )

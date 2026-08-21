@@ -1,11 +1,24 @@
 MAJOR_VERSION=1
-MINOR_VERSION=4
-PATCH_VERSION=6
-VERSION_STRING="v1.4.6"
-BUILD_DATE="2026-08-08"
-BUILD_TIME="13:35"
+MINOR_VERSION=5
+PATCH_VERSION=0
+VERSION_STRING="v1.5.0"
+BUILD_DATE="2026-08-22"
+BUILD_TIME="00:30"
 
 # 版本历史:
+# v1.5.0 (2026-08-22) - 微信文章支持与路径优化重大版本
+#   - 🎉 新功能：wxchat-article消息类型完整支持
+#   - 🔥 核心修复：路径重复bug - wxchat文件不再重复路径
+#   - 🔥 核心修复：状态更新bug - 现在根据SFTP上传结果决定最终状态
+#   - 🔥 核心修复：processed_file_count参数缺失 - 数据库正确显示处理文件数
+#   - 🔥 核心修复：钉钉通知SSL连接错误 - webhook通知正常工作
+#   - ✨ 路径结构优化：wxchat→/wechat/202608/，钉钉→/random/202608/
+#   - ✨ 文件命名优化：wxchat智能识别公众号名，钉钉PDF保留原文件名
+#   - 🎯 SFTP路径修复：根据消息类型选择正确的基础路径
+#   - 🛡️ 状态验证：只有真正上传成功才标记为success状态
+#   - 🚀 生产就绪：完整的错误处理和状态管理
+#   - 📦 编译优化：包含Playwright浏览器，支持微信文章PDF生成
+#
 # v1.4.7 (2026-08-19) - 消息重试限制功能完整部署准备版本
 #   - 🎉 Task 12完成：生产部署准备材料全面完成
 #   - 📋 综合部署检查清单：包含预部署、部署执行、部署后验证和回滚程序

@@ -1,9 +1,13 @@
 import requests
+import urllib3
 from typing import Optional
 from src.config.settings import Settings
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 禁用SSL警告（仅用于钉钉webhook，这是安全的外部API调用）
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class DingtalkNotifier:
@@ -79,7 +83,8 @@ class DingtalkNotifier:
                 self.webhook,
                 json=data,
                 headers=headers,
-                timeout=self.TIMEOUT
+                timeout=self.TIMEOUT,
+                verify=False  # 禁用SSL验证，解决钉钉webhook SSL连接问题
             )
 
             # 详细的响应日志

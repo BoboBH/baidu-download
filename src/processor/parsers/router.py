@@ -24,6 +24,7 @@ class RouterResult:
         upload_files: List of files ready for upload
         error: Error message if any step failed
         processor_used: Which processor handled this message
+        metadata: Additional metadata from processing (e.g., article info for wxchat)
     """
     message_type: str
     success: bool
@@ -32,6 +33,7 @@ class RouterResult:
     upload_files: List[dict] = None
     error: Optional[str] = None
     processor_used: Optional[str] = None
+    metadata: Optional[dict] = None
 
     def __post_init__(self):
         if self.upload_files is None:
@@ -98,6 +100,15 @@ class ProcessorRouter:
             self.logger.info("Registered DingTalkFileProcessor with priority 3")
         except ImportError as e:
             self.logger.warning(f"Could not import DingTalkFileProcessor: {e}")
+
+        # Priority 4: WxchatArticle (lowest)
+        try:
+            from src.processor.parsers.wxchat_article_processor import WxchatArticleProcessor
+            wxchat_processor = WxchatArticleProcessor(self.settings)
+            self.register_processor(wxchat_processor, priority=4)
+            self.logger.info("Registered WxchatArticleProcessor with priority 4")
+        except ImportError as e:
+            self.logger.warning(f"Could not import WxchatArticleProcessor: {e}")
 
     def register_processor(self, processor, priority: int):
         """
@@ -220,14 +231,24 @@ class ProcessorRouter:
 
             self.logger.info(f"Generated {len(upload_files)} upload file entries")
 
-            # Step 5: Return success result
+            # Step 5: Extract metadata for specific message types
+            metadata = None
+            if message_type == 'wxchat-article' and process_result.success:
+                # Extract article metadata for wxchat messages
+                metadata = {
+                    'article_title': getattr(process_result, 'article_title', None),
+                    'account_name': getattr(process_result, 'account_name', None)
+                }
+
+            # Step 6: Return success result
             return RouterResult(
                 message_type=message_type,
                 success=True,
                 download_result=download_result,
                 process_result=process_result,
                 upload_files=upload_files,
-                processor_used=processor_name
+                processor_used=processor_name,
+                metadata=metadata
             )
 
         except Exception as e:

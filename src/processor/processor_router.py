@@ -348,84 +348,121 @@ class ProcessorRouter:
             )
 
     def _process_wxchat_article(self, parse_result: ParseResult, start_time: datetime) -> ProcessResult:
-        """处理微信文章链接"""
-        logger.info("Routing to WeChat article processor...")
+        """处理微信文章链接 - 简化版：直接使用share_link生成PDF"""
+        logger.info("Processing WeChat article link directly...")
 
-        # 1. 下载并获取文章信息
-        download_result = self.wxchat_article_processor.download(parse_result)
+        try:
+            # 使用share_link（微信文章URL）直接处理
+            article_url = parse_result.share_link
+            article_id = parse_result.wxchat_article_id or article_url.split('/')[-1]
 
-        if not download_result.success:
-            processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
-            return ProcessResult(
-                success=False,
-                message_type='wxchat-article',
-                error_message=download_result.error,
-                processing_time_ms=processing_time
-            )
+            logger.info(f"Processing WeChat article: {article_url[:80]}...")
 
-        logger.info(f"微信文章信息获取成功: {download_result.article_title}")
+            # 1. 提取文章元数据（标题、公众号名）
+            download_result = self.wxchat_article_processor.download(parse_result)
 
-        # 2. 生成PDF
-        process_result = self.wxchat_article_processor.process(download_result, parse_result)
+            if not download_result.success:
+                processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
+                return ProcessResult(
+                    success=False,
+                    message_type='wxchat-article',
+                    error_message=download_result.error,
+                    retryable=download_result.retryable,
+                    processing_time_ms=processing_time
+                )
 
-        if not process_result.success:
+            logger.info(f"Article metadata extracted: {download_result.article_title}")
+
+            # 2. 生成PDF
+            process_result = self.wxchat_article_processor.process(download_result, parse_result)
+
+            if not process_result.success:
+                self.wxchat_article_processor.cleanup()
+                processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
+                return ProcessResult(
+                    success=False,
+                    message_type='wxchat-article',
+                    error_message=process_result.error,
+                    retryable=process_result.retryable,
+                    processing_time_ms=processing_time
+                )
+
+            # 3. 生成上传文件列表
+            upload_files = self.wxchat_article_processor.get_upload_files(process_result, parse_result)
+            logger.info(f"Generated {len(upload_files)} upload files")
+
+            # 4. 上传到SFTP
+            success_count = 0
+            failed_count = 0
+
+            if self.enable_sftp:
+                for upload_file in upload_files:
+                    local_path = upload_file['local_path']
+                    remote_path = upload_file['remote_path']
+
+                    logger.info(f"Uploading: {local_path} -> {remote_path}")
+
+                    try:
+                        # 确保远程目录存在
+                        remote_dir = os.path.dirname(remote_path)
+                        if not self.sftp_client.create_directory(remote_dir):
+                            logger.error(f"Failed to create remote directory: {remote_dir}")
+                            failed_count += 1
+                            continue
+
+                        # 上传文件
+                        if self.sftp_client.upload_file(local_path, remote_path):
+                            logger.info(f"Upload successful: {remote_path}")
+                            success_count += 1
+                        else:
+                            logger.error(f"Upload failed: {remote_path}")
+                            failed_count += 1
+                    except Exception as e:
+                        logger.error(f"Upload error for {remote_path}: {e}")
+                        failed_count += 1
+
+            # 5. 清理临时文件
             self.wxchat_article_processor.cleanup()
+
             processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
+
+            return ProcessResult(
+                success=success_count > 0,
+                message_type='wxchat-article',
+                total_files=len(upload_files),
+                success_count=success_count,
+                failed_count=failed_count,
+                processing_time_ms=processing_time,
+                metadata={
+                    'article_title': process_result.article_title,
+                    'account_name': process_result.account_name,
+                    'article_id': article_id,
+                    'article_url': article_url
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Error processing WeChat article: {e}")
+            self.wxchat_article_processor.cleanup()
+
+            processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
+            error_message = str(e)
+
+            # 判断是否为可重试错误
+            if "timeout" in error_message.lower() or "连接" in error_message.lower():
+                retryable = True
+            elif "database" in error_message.lower() or "db_" in error_message.lower():
+                retryable = False  # 数据库错误通常不可重试
+            else:
+                retryable = False  # 默认不可重试
+
             return ProcessResult(
                 success=False,
                 message_type='wxchat-article',
-                error_message=process_result.error,
+                error_message=error_message,
+                retryable=retryable,
                 processing_time_ms=processing_time
             )
-
-        # 3. 生成上传文件列表
-        upload_files = self.wxchat_article_processor.get_upload_files(process_result, parse_result)
-        logger.info(f"Generated {len(upload_files)} upload files")
-
-        # 4. 上传到SFTP
-        success_count = 0
-        failed_count = 0
-
-        if self.enable_sftp:
-            for upload_file in upload_files:
-                local_path = upload_file['local_path']
-                remote_path = upload_file['remote_path']
-
-                logger.info(f"Uploading: {local_path} -> {remote_path}")
-
-                # 确保远程目录存在
-                remote_dir = os.path.dirname(remote_path)
-                if not self.sftp_client.create_directory(remote_dir):
-                    logger.error(f"Failed to create remote directory: {remote_dir}")
-                    failed_count += 1
-                    continue
-
-                # 上传文件
-                if self.sftp_client.upload_file(local_path, remote_path):
-                    logger.info(f"Upload successful: {remote_path}")
-                    success_count += 1
-                else:
-                    logger.error(f"Upload failed: {remote_path}")
-                    failed_count += 1
-
-        # 5. 清理临时文件
-        self.wxchat_article_processor.cleanup()
-
-        processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
-
-        return ProcessResult(
-            success=success_count > 0,
-            message_type='wxchat-article',
-            total_files=len(upload_files),
-            success_count=success_count,
-            failed_count=failed_count,
-            processing_time_ms=processing_time,
-            metadata={
-                'article_title': process_result.article_title,
-                'account_name': process_result.account_name,
-                'article_id': parse_result.wxchat_article_id
-            }
-        )
 
     def close(self):
         """关闭所有连接"""
