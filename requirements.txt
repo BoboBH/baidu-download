@@ -14,3 +14,4 @@ cryptography==41.0.7  # Required for Python 3.8 compatibility
 
 # WeChat article PDF generation dependencies
 playwright>=1.40.0  # PDF generation (only solution)
+beautifulsoup4>=4.9.0  # HTML parsing for article metadata extraction
