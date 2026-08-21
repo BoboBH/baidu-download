@@ -32,6 +32,12 @@ class MessageParser:
         r'(https://pan\.baidu\.com/s/[a-zA-Z0-9_-]+(?:\?pwd=[a-zA-Z0-9]+)?)'
     )
 
+    # WeChat article link pattern
+    # Matches: https://mp.weixin.qq.com/s/[article_id]
+    WXCHAT_ARTICLE_PATTERN = re.compile(
+        r'(https://mp\.weixin\.qq\.com/s/[a-zA-Z0-9_-]+)'
+    )
+
     def __init__(self):
         """Initialize parser with all sub-parsers."""
         self.settings = Settings()
@@ -85,7 +91,12 @@ class MessageParser:
         if pdf_result:
             return pdf_result
 
-        # Priority 3: Try DingTalk file parser (only if message_data provided)
+        # Priority 3: Try WeChat article link parser
+        wxchat_result = self._parse_wxchat_article(content, source)
+        if wxchat_result:
+            return wxchat_result
+
+        # Priority 4: Try DingTalk file parser (only if message_data provided)
         if message_data:
             dingtalk_result = self.dingtalk_parser.parse(message_data, source)
             if dingtalk_result:
@@ -137,6 +148,34 @@ class MessageParser:
             share_link=share_link,
             extraction_code=extraction_code,
             folder_name=folder_name
+        )
+
+    def _parse_wxchat_article(self, content: str, source: str) -> Optional[ParseResult]:
+        """
+        解析微信文章链接
+
+        Args:
+            content: 消息内容
+            source: 消息来源
+
+        Returns:
+            ParseResult对象或None
+        """
+        match = self.WXCHAT_ARTICLE_PATTERN.search(content)
+        if not match:
+            return None
+
+        article_url = match.group(1)
+        article_id = article_url.split('/')[-1]
+
+        logger.info(f"识别到微信文章链接: {article_url}")
+
+        return ParseResult(
+            message_type='wxchat-article',
+            unique_identifier=article_id,
+            source=source,
+            wxchat_article_url=article_url,
+            wxchat_article_id=article_id
         )
 
     def calculate_message_hash(self, content: str) -> str:

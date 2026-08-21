@@ -332,6 +332,94 @@ class TestMessageParser(unittest.TestCase):
         self.assertIsNone(pwd_no)
 
 
+class TestWeChatArticleParser(unittest.TestCase):
+    """Test WeChat article link parser."""
+
+    def setUp(self):
+        """Set up test parser."""
+        self.parser = MessageParser()
+
+    def test_parse_wxchat_article_link(self):
+        """Test parsing standard WeChat article link."""
+        content = "请看这篇文章：https://mp.weixin.qq.com/s/ABC123XYZ"
+        result = self.parser.parse_message(content, 'feishu')
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.message_type, 'wxchat-article')
+        self.assertEqual(result.wxchat_article_url, 'https://mp.weixin.qq.com/s/ABC123XYZ')
+        self.assertEqual(result.wxchat_article_id, 'ABC123XYZ')
+        self.assertEqual(result.unique_identifier, 'ABC123XYZ')
+
+    def test_parse_wxchat_article_link_with_additional_text(self):
+        """Test parsing WeChat article link with additional text."""
+        content = "帮我把这个文章转成PDF https://mp.weixin.qq.com/s/DEF456UVW"
+        result = self.parser.parse_message(content, 'feishu')
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.message_type, 'wxchat-article')
+        self.assertEqual(result.wxchat_article_url, 'https://mp.weixin.qq.com/s/DEF456UVW')
+        self.assertEqual(result.wxchat_article_id, 'DEF456UVW')
+
+    def test_parse_wxchat_article_link_complex_id(self):
+        """Test parsing WeChat article link with complex article ID."""
+        content = "分享：https://mp.weixin.qq.com/s/abc123_xyz-456"
+        result = self.parser.parse_message(content, 'feishu')
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.message_type, 'wxchat-article')
+        self.assertEqual(result.wxchat_article_id, 'abc123_xyz-456')
+
+    def test_parse_no_wxchat_article_link(self):
+        """Test parsing message without WeChat article link."""
+        content = "This is just plain text without WeChat article"
+        result = self.parser.parse_message(content, 'feishu')
+
+        self.assertIsNone(result)
+
+    def test_parse_invalid_wechat_link(self):
+        """Test parsing invalid WeChat link format."""
+        content = "Invalid WeChat link: https://weixin.qq.com/test"
+        result = self.parser.parse_message(content, 'feishu')
+
+        self.assertIsNone(result)
+
+    def test_parse_empty_content(self):
+        """Test parsing empty content."""
+        result = self.parser.parse_message('', 'feishu')
+        self.assertIsNone(result)
+
+    def test_message_priority_wxchat_over_dingtalk(self):
+        """Test that WeChat article links have priority over DingTalk files."""
+        content = "WeChat article: https://mp.weixin.qq.com/s/TEST123"
+        message_data = {
+            'fileName': 'dingtalk.pdf',
+            'fileId': 'file123',
+            'spaceId': 'space456',
+            'downloadCode': 'code789'
+        }
+
+        result = self.parser.parse_message(content, 'dingtalk', message_data)
+
+        self.assertIsNotNone(result)
+        # Should match WeChat article (higher priority than DingTalk)
+        self.assertEqual(result.message_type, 'wxchat-article')
+
+    def test_parse_result_type_checker_wxchat(self):
+        """Test ParseResult type checker for WeChat article."""
+        result = ParseResult(
+            message_type='wxchat-article',
+            unique_identifier='test_id',
+            source='feishu',
+            wxchat_article_url='https://mp.weixin.qq.com/s/TEST',
+            wxchat_article_id='TEST'
+        )
+
+        self.assertTrue(result.is_wxchat_article())
+        self.assertFalse(result.is_baidupan())
+        self.assertFalse(result.is_pdf_link())
+        self.assertFalse(result.is_dingtalk_file())
+
+
 class TestFileKeyCalculation(unittest.TestCase):
     """Test file key calculation for deduplication."""
 
