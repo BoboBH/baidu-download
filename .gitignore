@@ -80,3 +80,9 @@ build/
 !baidu_download.spec
 !build_exe.bat
 !BUILD_README.md
+
+# Playwright持久化浏览器档案（含微信验证cookie，不入库）
+.wxchat_browser_profile/
+
+# 测试输出产物（探针截图等）
+output/

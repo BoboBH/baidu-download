@@ -203,8 +203,8 @@ class DingTalkFileProcessor:
         self.logger.info(f"Starting DingTalk file download: {file_name} (type: {message_type})")
 
         try:
-            # Create temporary directory
-            self.temp_dir = tempfile.mkdtemp(prefix='dingtalk_download_')
+            # 🔥 修复：使用更短的临时目录前缀，避免Windows 260字符路径限制
+            self.temp_dir = tempfile.mkdtemp(prefix='dd_')
             self.logger.debug(f"Created temp directory: {self.temp_dir}")
 
             # 🔥 新增：每次下载前先获取access_token
@@ -402,20 +402,9 @@ class DingTalkFileProcessor:
                     )
                 self.logger.info(f"Expected file size: {expected_size} bytes")
 
-            # 🔥 先检查响应内容，避免下载错误信息
-            response_preview = response.text[:500] if response.text else ""
-            self.logger.info(f"Response preview: {response_preview[:100]}...")
-
-            # 检查是否是错误页面
-            error_indicators = ['error', '错误', 'not found', '404', '403', '401']
-            if any(indicator in response_preview.lower() for indicator in error_indicators):
-                error_msg = f"服务器返回错误页面: {response_preview[:100]}"
-                self.logger.error(error_msg)
-                return DownloadResult(
-                    success=False,
-                    error=error_msg,
-                    retryable=False
-                )
+            # 🔥 修复：不要在下载前检查response.text，因为这会消耗流式响应
+            # 改为下载后通过文件头验证来检查文件有效性
+            # 对于PDF文件，我们会在下载后检查文件头是否为'%PDF'
 
             # Download with streaming to handle large files
             downloaded_size = 0
@@ -675,9 +664,50 @@ class DingTalkFileProcessor:
                         for encoding, description in encodings_to_try:
                             try:
                                 decoded_name = filename_bytes.decode(encoding)
-                                # 验证解码结果是否包含有意义的中文字符
-                                if any('一' <= c <= '鿿' for c in decoded_name):
-                                    self.logger.info(f"✅ Successfully detected {description}: {decoded_name}")
+                                self.logger.debug(f"🔍 Testing {description}: {decoded_name[:50]}...")
+
+                                # 🔥 更智能的验证：检查解码是否成功和结果是否合理
+                                is_valid_decoding = True
+
+                                # 1. 检查是否包含Unicode替换字符（说明解码失败）
+                                if '�' in decoded_name:
+                                    self.logger.debug(f"❌ {description}: Contains replacement character")
+                                    is_valid_decoding = False
+
+                                # 2. 检查是否包含控制字符（除了常见空格、制表符、换行）
+                                if any(ord(c) < 32 and c not in '\t\n\r' for c in decoded_name):
+                                    self.logger.debug(f"❌ {description}: Contains control characters")
+                                    is_valid_decoding = False
+
+                                # 3. 检查文件名是否为空或过短
+                                if len(decoded_name.strip()) == 0:
+                                    self.logger.debug(f"❌ {description}: Empty filename")
+                                    is_valid_decoding = False
+
+                                # 4. 检查是否包含过多不可打印字符
+                                if sum(1 for c in decoded_name if ord(c) < 32 or ord(c) == 127) > len(decoded_name) * 0.3:
+                                    self.logger.debug(f"❌ {description}: Too many unprintable characters")
+                                    is_valid_decoding = False
+
+                                # 5. 🔥 关键修复：检查ASCII字符比例 - 如果主要是ASCII，应该是英文文件名
+                                ascii_count = sum(1 for c in decoded_name if ord(c) < 128)
+                                ascii_ratio = ascii_count / len(decoded_name) if decoded_name else 0
+                                if ascii_ratio > 0.7:  # 70%以上是ASCII字符
+                                    # 如果主要是ASCII，检查是否包含乱码字符（CJK统一汉字等）
+                                    cjk_chars = sum(1 for c in decoded_name if '一' <= c <= '鿿')
+                                    if cjk_chars > 0:
+                                        self.logger.debug(f"❌ {description}: High ASCII ratio ({ascii_ratio:.1%}) but contains {cjk_chars} CJK characters - likely wrong encoding")
+                                        is_valid_decoding = False
+
+                                # 6. 🔥 检查文件扩展名是否合理
+                                valid_extensions = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.jpg', '.png'}
+                                has_valid_extension = any(decoded_name.lower().endswith(ext) for ext in valid_extensions)
+                                if not has_valid_extension and '.' in decoded_name:
+                                    self.logger.debug(f"❌ {description}: Invalid file extension")
+                                    is_valid_decoding = False
+
+                                if is_valid_decoding:
+                                    self.logger.info(f"✅ Successfully detected {description}: {decoded_name[:60]}...")
                                     break
                             except UnicodeDecodeError:
                                 continue
@@ -694,6 +724,9 @@ class DingTalkFileProcessor:
                     # 纯ASCII文件名，直接使用
                     self.logger.info(f"✅ Pure ASCII filename: {decoded_name}")
 
+                # 🔥 新增：清理文件名中的Windows不支持的字符
+                decoded_name = self._sanitize_filename(decoded_name)
+
                 # 跳过目录
                 if decoded_name.endswith('/'):
                     continue
@@ -701,23 +734,30 @@ class DingTalkFileProcessor:
                 self.logger.info(f"Processing file: {decoded_name}")
 
                 try:
-                    # 🔥 关键修复：用原始文件名解压，然后重命名为正确的中文文件名
-                    zip_ref.extract(file_info_obj.filename, extract_dir)
+                    # 🔥 最可靠的方法：直接读取ZIP文件数据并写入到正确文件名
+                    # 避免使用ZIP内部乱码文件名与文件系统交互
 
-                    # 构建原始文件路径（使用ZIP内部的错误编码文件名）
-                    original_extracted_path = os.path.join(extract_dir, wrong_decoded_name)
+                    # 构建最终的文件路径（使用解码和清理后的文件名）
+                    final_path = os.path.join(extract_dir, decoded_name)
 
-                    # 构建正确的文件路径（使用修复后的中文文件名）
-                    correct_file_path = os.path.join(extract_dir, decoded_name)
+                    # 🔥 关键：确保目标文件的父目录存在（处理ZIP中包含子目录的情况）
+                    final_parent_dir = os.path.dirname(final_path)
+                    if final_parent_dir and not os.path.exists(final_parent_dir):
+                        os.makedirs(final_parent_dir, exist_ok=True)
 
-                    # 如果文件名不同，重命名文件
-                    if wrong_decoded_name != decoded_name and os.path.exists(original_extracted_path):
-                        os.rename(original_extracted_path, correct_file_path)
-                        self.logger.info(f"✅ Renamed: {wrong_decoded_name} -> {decoded_name}")
-                        extracted_file_path = correct_file_path
-                    else:
-                        # 文件名相同或文件不存在，使用原始路径
-                        extracted_file_path = original_extracted_path
+                    # 直接从ZIP读取文件数据并写入到目标文件
+                    with zip_ref.open(file_info_obj) as source_file:
+                        with open(final_path, 'wb') as target_file:
+                            # 分块读取和写入，处理大文件
+                            chunk_size = 8192
+                            while True:
+                                chunk = source_file.read(chunk_size)
+                                if not chunk:
+                                    break
+                                target_file.write(chunk)
+
+                    extracted_file_path = final_path
+                    self.logger.info(f"✅ Extracted to: {decoded_name}")
 
                     file_size = os.path.getsize(extracted_file_path)
                     total_size += file_size
@@ -889,3 +929,87 @@ class DingTalkFileProcessor:
         # 🔥 优化：保留原文件名，不加时间戳后缀
         original_filename = parse_result.file_name if parse_result.file_name else 'file.pdf'
         return original_filename
+
+    def _sanitize_filename(self, filename: str) -> str:
+        """
+        清理文件名中的Windows不支持的字符。
+
+        Args:
+            filename: 原始文件名
+
+        Returns:
+            清理后的安全文件名
+        """
+        import re
+
+        # Windows不支持的字符：<>:"/\|?* 以及控制字符
+        # 替换规则：
+        # | -> - (管道符替换为连字符)
+        # < -> [ (左尖括号替换为左方括号)
+        # > -> ] (右尖括号替换为右方括号)
+        # : -> - (冒号替换为连字符)
+        # " -> ' (双引号替换为单引号)
+        # \ -> - (反斜杠替换为连字符)
+        # / -> - (斜杠替换为连字符)
+        # ? -> (问号删除)
+        # * -> (星号删除)
+        # % -> _ (百分号替换为下划线，避免URL编码问题)
+
+        # 处理扩展ASCII字符（如 Ü, ü 等）
+        # 尝试保持可读性：Ü -> U, ü -> u, é -> e 等
+        try:
+            # 简单的扩展ASCII字符映射
+            char_map = {
+                'Ü': 'U', 'ü': 'u', 'Ä': 'A', 'ä': 'a', 'Ö': 'O', 'ö': 'o',
+                'É': 'E', 'é': 'e', 'È': 'E', 'è': 'e', 'Ê': 'E', 'ê': 'e',
+                'Á': 'A', 'á': 'a', 'À': 'A', 'à': 'a', 'Â': 'A', 'â': 'a',
+                'Í': 'I', 'í': 'i', 'Ì': 'I', 'ì': 'i', 'Î': 'I', 'î': 'i',
+                'Ó': 'O', 'ó': 'o', 'Ò': 'O', 'ò': 'o', 'Ô': 'O', 'ô': 'o',
+                'Ú': 'U', 'ú': 'u', 'Ù': 'U', 'ù': 'u', 'Û': 'U', 'û': 'u',
+                'Ç': 'C', 'ç': 'c', 'Ñ': 'N', 'ñ': 'n'
+            }
+
+            for char, replacement in char_map.items():
+                filename = filename.replace(char, replacement)
+        except Exception as e:
+            self.logger.warning(f"Extended ASCII character mapping failed: {e}")
+
+        # 替换Windows不支持的字符
+        filename = filename.replace('|', '-')    # 管道符
+        filename = filename.replace('<', '[')    # 左尖括号
+        filename = filename.replace('>', ']')    # 右尖括号
+        filename = filename.replace(':', '-')    # 冒号
+        filename = filename.replace('"', "'")    # 双引号
+        filename = filename.replace('\\', '-')   # 反斜杠
+        filename = filename.replace('/', '-')    # 斜杠
+        filename = filename.replace('?', '')     # 问号删除
+        filename = filename.replace('*', '')     # 星号删除
+        filename = filename.replace('%', '_')    # 百分号替换为下划线
+
+        # 删除控制字符（0-31, 127）
+        filename = ''.join(char for char in filename if ord(char) >= 32 and ord(char) != 127)
+
+        # 清理多余的空格和连字符
+        filename = re.sub(r'\s+', ' ', filename)       # 多个空格替换为单个空格
+        filename = re.sub(r'-+', '-', filename)        # 多个连字符替换为单个连字符
+        filename = re.sub(r'^\s+|\s+$', '', filename)   # 删除首尾空格
+
+        # 确保文件名不超过Windows路径长度限制（255字符）
+        # Windows文件名本身限制为255字符，但路径总长度限制为260字符
+        max_length = 200  # 保留一些空间给路径
+        if len(filename) > max_length:
+            # 保留扩展名
+            name, ext = os.path.splitext(filename)
+            # 截断主文件名
+            filename = name[:max_length - len(ext)] + ext
+
+        # 确保文件名不为空
+        if not filename:
+            filename = f"unnamed_file_{hash(filename) % 10000}"
+
+        # 记录清理后的文件名（如果发生了变化）
+        original_first_50 = filename[:50]
+        if len(filename) != len([c for c in filename if ord(c) < 128]):
+            self.logger.info(f"🔧 Sanitized filename (had special chars): {original_first_50}...")
+
+        return filename

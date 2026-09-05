@@ -98,6 +98,10 @@ def parse_arguments() -> argparse.Namespace:
 
   微信模式 - 同步账号:
     python main.py --wxchat --wxchat-sync-accounts
+
+  微信模式 - 爬虫源文章:
+    python main.py --crawler-wxchat
+    python main.py --crawler-wxchat --crawler-wxchat-days 7 --verbose
         '''
     )
 
@@ -193,7 +197,120 @@ def parse_arguments() -> argparse.Namespace:
         help='强制重新处理：跳过去重检查，重新处理所有文件（包括之前成功的）'
     )
 
+    parser.add_argument(
+        '--crawler-wxchat',
+        dest='crawler_wxchat',
+        action='store_true',
+        help='微信模式-爬虫源：处理爬虫库微信公众号文章（wechat_crawler_articles），生成PDF并上传（双SFTP，与--wxchat一致）'
+    )
+
+    parser.add_argument(
+        '--crawler-wxchat-days',
+        dest='crawler_wxchat_days',
+        type=int,
+        default=None,
+        help='爬虫源模式：只处理最近N天发布的文章（默认不限，处理所有未成功文章）'
+    )
+
     return parser.parse_args()
+
+def _emit_wxchat_result(settings: Settings, result, report_title: str,
+                        source_label: str = "", scope_desc: str = "") -> int:
+    """打印微信文章处理统计并发送钉钉报告（--wxchat 与 --crawler-wxchat 共用）
+
+    Args:
+        settings: 配置对象
+        result: ProcessResult 处理结果
+        report_title: 钉钉报告标题
+        source_label: 数据源标签（如 "" 或 "（爬虫源）"）
+        scope_desc: 处理范围描述（如 "最近3 天" 或 "全部未处理"）
+
+    Returns:
+        进程退出码：0=无失败文章，1=有失败文章
+    """
+    logger.info("=" * 60)
+    logger.info(f"微信文章处理完成{source_label}！")
+    logger.info(f"总计文章: {result.total_articles} 篇")
+    logger.info(f"成功处理: {result.processed_articles} 篇")
+    logger.info(f"失败文章: {result.failed_articles} 篇")
+    logger.info(f"跳过文章: {result.skipped_articles} 篇")
+
+    if result.start_time and result.end_time:
+        duration = (result.end_time - result.start_time).total_seconds()
+        logger.info(f"处理耗时: {duration:.2f} 秒")
+
+    if result.errors:
+        total_errors = len(result.errors)
+        display_count = min(5, total_errors)
+        logger.warning(f"错误信息: {total_errors} 个 (显示前 {display_count} 个)")
+        for error in result.errors[:display_count]:
+            logger.warning(f"  - {error}")
+        if total_errors > display_count:
+            logger.warning(f"  ... 还有 {total_errors - display_count} 个错误未显示")
+
+    logger.info("=" * 60)
+
+    # 发送报告到钉钉群
+    try:
+        from src.notification.dingtalk_notifier import DingtalkNotifier
+        notifier = DingtalkNotifier(settings)
+
+        # 构建报告消息
+        report_content = f"""## 微信文章处理完成报告{source_label}
+
+### 📈 处理统计
+- **总计文章**: {scope_desc}共 {result.total_articles} 篇
+- **✅ 成功处理**: {result.processed_articles} 篇
+- **❌ 失败文章**: {result.failed_articles} 篇
+- **⏭️ 跳过文章**: {result.skipped_articles} 篇
+
+### ⏱️ 处理时间
+"""
+
+        if result.start_time and result.end_time:
+            duration = (result.end_time - result.start_time).total_seconds()
+            start_time_str = result.start_time.strftime('%Y-%m-%d %H:%M:%S')
+            end_time_str = result.end_time.strftime('%Y-%m-%d %H:%M:%S')
+            report_content += f"- **开始时间**: {start_time_str}\n"
+            report_content += f"- **结束时间**: {end_time_str}\n"
+            report_content += f"- **处理耗时**: {duration:.2f} 秒\n\n"
+
+        # 添加错误信息（如果有）
+        if result.errors:
+            total_errors = len(result.errors)
+            display_count = min(5, total_errors)
+            report_content += f"### ⚠️ 错误信息 ({total_errors} 个)\n"
+            for error in result.errors[:display_count]:
+                report_content += f"- {error}\n"
+            if total_errors > display_count:
+                report_content += f"- ... 还有 {total_errors - display_count} 个错误未显示\n"
+            report_content += "\n"
+
+        # 添加状态总结
+        if result.failed_articles == 0:
+            report_content += "### 🎉 处理完成\n所有文章处理成功，无失败！"
+        else:
+            success_rate = (result.processed_articles / result.total_articles * 100) if result.total_articles > 0 else 0
+            report_content += f"### 📋 处理完成\n成功率: {success_rate:.1f}%"
+
+        # 判断是否需要发送报告：有新增文章或有失败文章时才发送
+        should_send_report = result.processed_articles > 0 or result.failed_articles > 0
+
+        if should_send_report:
+            logger.info("正在发送报告到钉钉群...")
+            if notifier.send_notification(report_title, report_content):
+                logger.info("✅ 报告已成功发送到钉钉群")
+            else:
+                logger.warning("⚠️ 钉钉报告发送失败")
+        else:
+            logger.info("ℹ️ 没有新增文章也没有失败文章，跳过报告发送")
+
+    except ImportError:
+        logger.warning("钉钉通知模块未导入，跳过报告发送")
+    except Exception as e:
+        logger.error(f"发送钉钉报告时出错: {e}")
+
+    return 0 if result.failed_articles == 0 else 1
 
 def main() -> int:
     """主函数"""
@@ -302,94 +419,68 @@ def main() -> int:
                     processor = WeChatArticleProcessor(settings)
                     result = processor.process_articles(days=days)
 
-                    logger.info("=" * 60)
-                    logger.info("微信文章处理完成！")
-                    logger.info(f"总计文章: {result.total_articles} 篇")
-                    logger.info(f"成功处理: {result.processed_articles} 篇")
-                    logger.info(f"失败文章: {result.failed_articles} 篇")
-                    logger.info(f"跳过文章: {result.skipped_articles} 篇")
-
-                    if result.start_time and result.end_time:
-                        duration = (result.end_time - result.start_time).total_seconds()
-                        logger.info(f"处理耗时: {duration:.2f} 秒")
-
-                    if result.errors:
-                        total_errors = len(result.errors)
-                        display_count = min(5, total_errors)
-                        logger.warning(f"错误信息: {total_errors} 个 (显示前 {display_count} 个)")
-                        for error in result.errors[:display_count]:
-                            logger.warning(f"  - {error}")
-                        if total_errors > display_count:
-                            logger.warning(f"  ... 还有 {total_errors - display_count} 个错误未显示")
-
-                    logger.info("=" * 60)
-
-                    # 发送报告到钉钉群
-                    try:
-                        from src.notification.dingtalk_notifier import DingtalkNotifier
-                        notifier = DingtalkNotifier(settings)
-
-                        # 构建报告消息
-                        report_title = "📊 微信文章处理报告"
-                        report_content = f"""## 微信文章处理完成报告
-
-### 📈 处理统计
-- **总计文章**: {result.total_articles} 篇
-- **✅ 成功处理**: {result.processed_articles} 篇
-- **❌ 失败文章**: {result.failed_articles} 篇
-- **⏭️ 跳过文章**: {result.skipped_articles} 篇
-
-### ⏱️ 处理时间
-"""
-
-                        if result.start_time and result.end_time:
-                            duration = (result.end_time - result.start_time).total_seconds()
-                            start_time_str = result.start_time.strftime('%Y-%m-%d %H:%M:%S')
-                            end_time_str = result.end_time.strftime('%Y-%m-%d %H:%M:%S')
-                            report_content += f"- **开始时间**: {start_time_str}\n"
-                            report_content += f"- **结束时间**: {end_time_str}\n"
-                            report_content += f"- **处理耗时**: {duration:.2f} 秒\n\n"
-
-                        # 添加错误信息（如果有）
-                        if result.errors:
-                            total_errors = len(result.errors)
-                            display_count = min(5, total_errors)
-                            report_content += f"### ⚠️ 错误信息 ({total_errors} 个)\n"
-                            for error in result.errors[:display_count]:
-                                report_content += f"- {error}\n"
-                            if total_errors > display_count:
-                                report_content += f"- ... 还有 {total_errors - display_count} 个错误未显示\n"
-                            report_content += "\n"
-
-                        # 添加状态总结
-                        if result.failed_articles == 0:
-                            report_content += "### 🎉 处理完成\n所有文章处理成功，无失败！"
-                        else:
-                            success_rate = (result.processed_articles / result.total_articles * 100) if result.total_articles > 0 else 0
-                            report_content += f"### 📋 处理完成\n成功率: {success_rate:.1f}%"
-
-                        # 判断是否需要发送报告：有新增文章或有失败文章时才发送
-                        should_send_report = result.processed_articles > 0 or result.failed_articles > 0
-
-                        if should_send_report:
-                            logger.info("正在发送报告到钉钉群...")
-                            if notifier.send_notification(report_title, report_content):
-                                logger.info("✅ 报告已成功发送到钉钉群")
-                            else:
-                                logger.warning("⚠️ 钉钉报告发送失败")
-                        else:
-                            logger.info("ℹ️ 没有新增文章也没有失败文章，跳过报告发送")
-
-                    except ImportError:
-                        logger.warning("钉钉通知模块未导入，跳过报告发送")
-                    except Exception as e:
-                        logger.error(f"发送钉钉报告时出错: {e}")
-
-                    return 0 if result.failed_articles == 0 else 1
+                    return _emit_wxchat_result(
+                        settings, result,
+                        report_title="📊 微信文章处理报告",
+                        source_label="",
+                        scope_desc=f"最近{days} 天"
+                    )
 
                 except Exception as e:
                     logger.error(f"微信文章处理失败: {e}", exc_info=True)
                     return 1
+
+        # 微信模式-爬虫源：处理爬虫库微信公众号文章
+        if args.crawler_wxchat:
+            logger.info("微信模式-爬虫源：开始处理爬虫库微信文章...")
+
+            # 确保Playwright浏览器已安装
+            if not ensure_playwright_browsers():
+                logger.error("Playwright浏览器未就绪，无法处理微信文章")
+                logger.error("请手动运行: pip install playwright && playwright install chromium")
+                return 1
+
+            # 校验天数参数（可选；提供时范围与--wxchat一致）
+            days = args.crawler_wxchat_days
+            if days is not None and (days < 1 or days > settings.wxchat_max_days):
+                logger.error(f"天数必须在 1 到 {settings.wxchat_max_days} 之间（不传则处理所有未成功文章）")
+                return 1
+
+            try:
+                # 前置检查：状态表 crawler_wx_article 是否已创建（014迁移），
+                # 避免取数层吞掉缺表异常后静默按0篇处理
+                import pymysql
+                conn = pymysql.connect(
+                    host=settings.db_host,
+                    port=settings.db_port,
+                    user=settings.db_user,
+                    password=settings.db_password,
+                    database=settings.db_name
+                )
+                try:
+                    with conn.cursor() as cursor:
+                        cursor.execute("SELECT 1 FROM crawler_wx_article LIMIT 1")
+                finally:
+                    conn.close()
+
+                processor = WeChatArticleProcessor(settings, source="crawler")
+                result = processor.process_articles(days=days)
+
+                scope_desc = f"最近{days} 天" if days is not None else "全部未处理"
+                return _emit_wxchat_result(
+                    settings, result,
+                    report_title="📊 微信文章处理报告（爬虫源）",
+                    source_label="（爬虫源）",
+                    scope_desc=scope_desc
+                )
+
+            except Exception as e:
+                if "1146" in str(e) or "doesn't exist" in str(e):
+                    logger.error(f"状态表 crawler_wx_article 不可用: {e}")
+                    logger.error("请先执行迁移: mysql -u root -p test < database/migrations/014_create_crawler_wx_article.sql")
+                else:
+                    logger.error(f"爬虫源微信文章处理失败: {e}", exc_info=True)
+                return 1
 
         # 接收模式：专职接收飞书消息
         if args.receive_messages:

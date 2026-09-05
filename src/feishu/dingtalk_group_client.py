@@ -54,7 +54,7 @@ class MessageHandler(CallbackHandler):
         logger.info("支持消息类型：百度网盘链接、PDF链接、钉钉文件(PDF/ZIP)")
 
     async def send_feedback(self, conversation_title: str, message_content: str,
-                           is_valid: bool, details: str = "", sender_nick: str = None, sender_id: str = None):
+                           is_valid: bool, details: str = "", sender_nick: str = None, sender_id: str = None, conversation_type: int = None):
         """
         发送处理反馈到钉钉群
 
@@ -65,6 +65,7 @@ class MessageHandler(CallbackHandler):
             details: 详细信息（成功时显示记录内容，失败时显示错误原因）
             sender_nick: 发送者昵称（可选）
             sender_id: 发送者ID（可选）
+            conversation_type: 会话类型（1=群聊, 2=私聊）
         """
         if not self.notifier:
             logger.warning("⚠️  未配置通知器，无法发送反馈消息")
@@ -78,22 +79,30 @@ class MessageHandler(CallbackHandler):
             logger.info(f"✅ 有效: {is_valid}")
             logger.info(f"📋 详情: {details}")
 
+            # 根据conversation_title确定聊天显示名称
+            if conversation_title:
+                # 有群名称，显示群名
+                chat_display = conversation_title
+            else:
+                # 无群名称，根据其他信息判断
+                chat_display = "钉钉群" if conversation_type == 1 else "私聊"
+
             if is_valid:
-                title = "feedback: 收到有效百度网盘链接"
+                title = "消息成功"
                 content = f"""## 消息处理成功
 
-**群聊**: {conversation_title}
+**聊天**: {chat_display}
 **消息**: {message_content[:50]}...
 **状态**: 已记录到数据库，等待处理
 
 {details}
 """
             else:
-                title = "feedback: 消息格式无效"
+                title = "消息失败"
                 content_lines = [
                     "## 消息处理失败",
                     "",
-                    f"**群聊**: {conversation_title}",
+                    f"**聊天**: {chat_display}",
                     f"**消息**: {message_content[:50]}...",
                     f"**原因**: {details}",
                     ""
@@ -150,15 +159,39 @@ class MessageHandler(CallbackHandler):
             # 异步发送，不阻塞主流程（兼容Python 3.8）
             loop = asyncio.get_running_loop()
             logger.info(f"🔄 开始异步发送...")
-            result = await loop.run_in_executor(
+
+            # 先发送webhook群消息
+            webhook_result = await loop.run_in_executor(
                 None,
                 self.notifier.send_notification,
                 title,
                 content
             )
 
-            if result:
+            if webhook_result:
                 logger.info(f"✅ 反馈消息发送成功: {title}")
+
+                # 🔥 如果有发送者信息，用相同的内容发送私信
+                if sender_id:
+                    logger.info(f"📤 准备发送私信给发送者: {sender_id}（复用webhook内容）")
+
+                    # 个性化称呼（如果需要）
+                    private_content = content
+                    if sender_nick:
+                        private_content = f"@{sender_nick} " + content
+
+                    private_result = await loop.run_in_executor(
+                        None,
+                        self.notifier.send_private_message,
+                        sender_id,
+                        title,
+                        private_content
+                    )
+
+                    if private_result:
+                        logger.info(f"✅ 发送者私信发送成功: {sender_id}")
+                    else:
+                        logger.warning(f"⚠️ 发送者私信发送失败: {sender_id}")
             else:
                 logger.error(f"❌ 反馈消息发送失败: {title}")
                 logger.error("💡 请检查:")
@@ -208,6 +241,8 @@ class MessageHandler(CallbackHandler):
             logger.info(f"群名称: {chatbot_message.conversation_title}")
             logger.info(f"发送者: {chatbot_message.sender_nick} ({chatbot_message.sender_id})")
             logger.info(f"消息类型: {chatbot_message.message_type}")
+            # 🤖 接收消息的机器人身份：robotUserId 即回调里的 chatbotUserId
+            logger.info(f"接收机器人: RobotCode={chatbot_message.robot_code}, RobotUserId={chatbot_message.chatbot_user_id}")
 
             # 🔍 打印所有消息类型的完整内容
             logger.info("=" * 80)
@@ -333,8 +368,13 @@ class MessageHandler(CallbackHandler):
 
                 logger.info("=" * 80)
 
-                # 使用空字符串作为文件消息的文本内容
-                message_content = ""
+                # 🔥 对于钉钉文件消息，直接传递文件信息给解析器
+                if message_data:
+                    logger.info(f"📎 钉钉文件消息，直接使用文件信息解析")
+                    parse_result = self.parser.parse_message("", source='dingtalk', message_data=message_data)
+                else:
+                    # 其他消息类型，正常解析
+                    parse_result = self.parser.parse_message(message_content, source='dingtalk', message_data=message_data)
 
             else:
                 # 🔍 其他非文本消息类型 - 详细打印所有内容
@@ -372,7 +412,8 @@ class MessageHandler(CallbackHandler):
                     f"不支持的类型: {chatbot_message.message_type}",
                     is_valid=False,
                     sender_nick=chatbot_message.sender_nick,
-                    sender_id=chatbot_message.sender_id,
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
+                    conversation_type=chatbot_message.conversation_type,  # 添加会话类型
                     details=unsupported_details
                 )
                 return AckMessage.STATUS_OK, "OK"
@@ -395,7 +436,8 @@ class MessageHandler(CallbackHandler):
                     message_content if message_content else "文件消息",
                     is_valid=False,
                     sender_nick=chatbot_message.sender_nick,
-                    sender_id=chatbot_message.sender_id,
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
+                    conversation_type=chatbot_message.conversation_type,  # 添加会话类型
                     details="群聊消息未@机器人，无法处理。请在消息中@机器人以触发处理。"
                 )
 
@@ -438,7 +480,8 @@ class MessageHandler(CallbackHandler):
                     message_content if message_content else "文件消息",
                     is_valid=False,
                     sender_nick=chatbot_message.sender_nick,
-                    sender_id=chatbot_message.sender_id,
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
+                    conversation_type=chatbot_message.conversation_type,  # 添加会话类型
                     details=error_details
                 )
                 return AckMessage.STATUS_OK, "OK"
@@ -454,7 +497,8 @@ class MessageHandler(CallbackHandler):
                     message_content if message_content else "文件消息",
                     is_valid=False,
                     sender_nick=chatbot_message.sender_nick,
-                    sender_id=chatbot_message.sender_id,
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
+                    conversation_type=chatbot_message.conversation_type,  # 添加会话类型
                     details=f"消息源异常：{parse_result.source}，当前仅支持钉钉消息源"
                 )
                 return AckMessage.STATUS_OK, "OK"
@@ -503,7 +547,8 @@ class MessageHandler(CallbackHandler):
                     message_content,
                     is_valid=False,
                     sender_nick=chatbot_message.sender_nick,
-                    sender_id=chatbot_message.sender_id,
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
+                    conversation_type=chatbot_message.conversation_type,  # 添加会话类型
                     details=f"重复消息，已存在记录。当前状态: {existing_message.process_status}，已重试: {existing_message.retry_count}次"
                 )
                 return AckMessage.STATUS_OK, "OK"
@@ -521,7 +566,7 @@ class MessageHandler(CallbackHandler):
                     folder_name=parse_result.folder_name,
                     extraction_code=parse_result.extraction_code,
                     source='dingtalk',
-                    sender_id=chatbot_message.sender_id,
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
                     sender_nick=chatbot_message.sender_nick,
                     message_type='baidupan',  # 设置消息类型
                     raw_message=json.dumps({
@@ -531,7 +576,8 @@ class MessageHandler(CallbackHandler):
                         'sender_nick': chatbot_message.sender_nick,
                         'message_type': chatbot_message.message_type,
                         'content': message_content,
-                        'is_in_at_list': chatbot_message.is_in_at_list
+                        'is_in_at_list': chatbot_message.is_in_at_list,
+                        'sender_staff_id': getattr(chatbot_message, 'sender_staff_id', None)
                     }, ensure_ascii=False),
                     process_status='pending',
                     processing_time_ms=processing_time_ms
@@ -550,7 +596,7 @@ class MessageHandler(CallbackHandler):
                     share_link=dingtalk_file_id,  # 统一使用 share_link 字段
                     folder_name=parse_result.file_name,  # 使用文件名作为folder_name
                     extraction_code=parse_result.download_code,  # 使用download_code作为extraction_code
-                    sender_id=chatbot_message.sender_id,
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
                     sender_nick=chatbot_message.sender_nick,
                     source='dingtalk',
                     message_type=file_type,  # 设置消息类型：dingtalk_pdf 或 dingtalk_zip
@@ -564,7 +610,8 @@ class MessageHandler(CallbackHandler):
                         'file_id': parse_result.file_id,
                         'space_id': parse_result.space_id,
                         'download_code': parse_result.download_code,
-                        'is_in_at_list': chatbot_message.is_in_at_list
+                        'is_in_at_list': chatbot_message.is_in_at_list,
+                        'sender_staff_id': getattr(chatbot_message, 'sender_staff_id', None)
                     }, ensure_ascii=False),
                     process_status='pending',
                     processing_time_ms=processing_time_ms
@@ -579,7 +626,7 @@ class MessageHandler(CallbackHandler):
                     extraction_code=parse_result.extraction_code,
                     source='dingtalk',
                     message_type=parse_result.message_type,  # 使用解析结果的消息类型（pdf_link等）
-                    sender_id=chatbot_message.sender_id,
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
                     sender_nick=chatbot_message.sender_nick,
                     raw_message=json.dumps({
                         'conversation_id': chatbot_message.conversation_id,
@@ -588,7 +635,8 @@ class MessageHandler(CallbackHandler):
                         'sender_nick': chatbot_message.sender_nick,
                         'message_type': chatbot_message.message_type,
                         'content': message_content,
-                        'is_in_at_list': chatbot_message.is_in_at_list
+                        'is_in_at_list': chatbot_message.is_in_at_list,
+                        'sender_staff_id': getattr(chatbot_message, 'sender_staff_id', None)
                     }, ensure_ascii=False),
                     process_status='pending',
                     processing_time_ms=processing_time_ms
@@ -610,7 +658,8 @@ class MessageHandler(CallbackHandler):
                     is_valid=True,
                     details=f"已记录百度网盘链接: {folder_display}",
                     sender_nick=chatbot_message.sender_nick,
-                    sender_id=chatbot_message.sender_id
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
+                    conversation_type=chatbot_message.conversation_type  # 添加会话类型
                 )
             elif parse_result.is_dingtalk_pdf():
                 await self.send_feedback(
@@ -619,7 +668,8 @@ class MessageHandler(CallbackHandler):
                     is_valid=True,
                     details=f"已记录钉钉PDF文件: {parse_result.file_name}",
                     sender_nick=chatbot_message.sender_nick,
-                    sender_id=chatbot_message.sender_id
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
+                    conversation_type=chatbot_message.conversation_type  # 添加会话类型
                 )
             elif parse_result.is_dingtalk_zip():
                 await self.send_feedback(
@@ -628,7 +678,8 @@ class MessageHandler(CallbackHandler):
                     is_valid=True,
                     details=f"已记录钉钉ZIP文件: {parse_result.file_name}",
                     sender_nick=chatbot_message.sender_nick,
-                    sender_id=chatbot_message.sender_id
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
+                    conversation_type=chatbot_message.conversation_type  # 添加会话类型
                 )
             elif parse_result.is_pdf_link():
                 await self.send_feedback(
@@ -637,7 +688,8 @@ class MessageHandler(CallbackHandler):
                     is_valid=True,
                     details=f"已记录PDF链接: {parse_result.pdf_url[:50]}...",
                     sender_nick=chatbot_message.sender_nick,
-                    sender_id=chatbot_message.sender_id
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
+                    conversation_type=chatbot_message.conversation_type  # 添加会话类型
                 )
             elif parse_result.is_wxchat_article():
                 await self.send_feedback(
@@ -646,7 +698,8 @@ class MessageHandler(CallbackHandler):
                     is_valid=True,
                     details=f"已记录微信文章: {parse_result.wxchat_article_id[:30]}...",
                     sender_nick=chatbot_message.sender_nick,
-                    sender_id=chatbot_message.sender_id
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
+                    conversation_type=chatbot_message.conversation_type  # 添加会话类型
                 )
             else:
                 # 通用消息
@@ -656,7 +709,8 @@ class MessageHandler(CallbackHandler):
                     is_valid=True,
                     details=f"已记录消息: {parse_result.message_type}",
                     sender_nick=chatbot_message.sender_nick,
-                    sender_id=chatbot_message.sender_id
+                    sender_id=chatbot_message.sender_staff_id or chatbot_message.sender_id,  # 优先使用sender_staff_id
+                    conversation_type=chatbot_message.conversation_type  # 添加会话类型
                 )
 
             return AckMessage.STATUS_OK, "OK"

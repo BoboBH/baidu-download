@@ -98,6 +98,10 @@ class Settings:
         self.wxchat_pdf_timeout = self._get_int_env('WXCHAT_PDF_TIMEOUT', default=300)
         self.wxchat_image_wait_time = self._get_int_env('WXCHAT_IMAGE_WAIT_TIME', default=20)
         self.wxchat_download_delay = self._get_int_env('WXCHAT_DOWNLOAD_DELAY', default=5)
+        # 每篇文章处理后随机延时的上限秒数（实际延时在 [download_delay, download_delay_max] 内随机）
+        self.wxchat_download_delay_max = self._get_int_env('WXCHAT_DOWNLOAD_DELAY_MAX', default=50)
+        # 浏览器持久化档案目录：保存微信验证后的cookie，供PDF生成浏览器复用以通过反爬
+        self.wxchat_browser_profile = os.getenv('WXCHAT_BROWSER_PROFILE', './.wxchat_browser_profile')
         self.wxchat_max_days = self._get_int_env('WXCHAT_MAX_DAYS', default=30)
 
         # 外部SFTP配置 (可选)
@@ -199,6 +203,8 @@ class Settings:
                 raise ConfigError(f"WXCHAT_IMAGE_WAIT_TIME must be between 5 and 120: {self.wxchat_image_wait_time}")
             if self.wxchat_download_delay < 1 or self.wxchat_download_delay > 60:
                 raise ConfigError(f"WXCHAT_DOWNLOAD_DELAY must be between 1 and 60: {self.wxchat_download_delay}")
+            if self.wxchat_download_delay_max < 1 or self.wxchat_download_delay_max > 300:
+                raise ConfigError(f"WXCHAT_DOWNLOAD_DELAY_MAX must be between 1 and 300: {self.wxchat_download_delay_max}")
             if self.wxchat_max_days < 1 or self.wxchat_max_days > 365:
                 raise ConfigError(f"WXCHAT_MAX_DAYS must be between 1 and 365: {self.wxchat_max_days}")
 

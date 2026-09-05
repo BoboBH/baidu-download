@@ -137,6 +137,7 @@ class FileTransferProcessor:
                     extraction_code=row.get('extraction_code'),
                     source=row.get('source', 'feishu'),
                     message_type=row.get('message_type', 'baidupan'),  # 添加message_type字段
+                    raw_message=row.get('raw_message'),  # 🔥 添加raw_message字段用于提取sender信息
                     process_status=row['process_status'],
                     error_message=row['error_message'],
                     execution_summary_id=row.get('execution_summary_id'),
@@ -199,6 +200,25 @@ class FileTransferProcessor:
                     # 更新状态为 processing
                     self.db_repo.update_message_status(message.message_hash, "processing")
 
+                    # 🔥 从raw_message中提取sender信息用于私信
+                    import json
+                    sender_id_for_private = None
+                    sender_nick_for_private = None
+                    self.logger.info(f"[SENDER_EXTRACTION] Starting sender info extraction for message {message.id}")
+
+                    if message.raw_message:
+                        self.logger.info(f"[SENDER_EXTRACTION] raw_message exists, length: {len(message.raw_message)}")
+                        try:
+                            raw_data = json.loads(message.raw_message)
+                            # 优先使用sender_staff_id（标准钉钉userId）
+                            sender_id_for_private = raw_data.get('sender_staff_id') or raw_data.get('sender_id')
+                            sender_nick_for_private = raw_data.get('sender_nick')
+                            self.logger.info(f"Extracted sender info: id={sender_id_for_private}, nick={sender_nick_for_private}")
+                        except Exception as e:
+                            self.logger.warning(f"Failed to extract sender info from raw_message: {e}")
+                    else:
+                        self.logger.warning(f"[SENDER_EXTRACTION] message.raw_message is None or empty")
+
                     # 根据消息类型选择处理方式
                     if message.message_type == 'baidupan' or not self.router:
                         # 百度网盘消息：使用 FileProcessor（完整流程：transfer->download->upload to SFTP）
@@ -245,6 +265,19 @@ class FileTransferProcessor:
                                 processing_time_ms=processing_time_ms
                             )
 
+                        # 从raw_message中提取sender信息用于私信
+                        import json
+                        sender_id_for_private = None
+                        sender_nick_for_private = None
+                        if message.raw_message:
+                            try:
+                                raw_data = json.loads(message.raw_message)
+                                # 优先使用sender_staff_id（标准钉钉userId）
+                                sender_id_for_private = raw_data.get('sender_staff_id') or raw_data.get('sender_id')
+                                sender_nick_for_private = raw_data.get('sender_nick')
+                            except:
+                                pass
+
                         # 构建处理结果
                         process_result = ProcessResult(
                             message_id=message.id,
@@ -259,12 +292,11 @@ class FileTransferProcessor:
                             failed_count=summary.failed_count if summary else 0,
                             skipped_count=summary.skipped_count if summary else 0,
                             total_size_mb=(summary.total_size / (1024 * 1024)) if summary and summary.total_size else 0.0,
-                            sender_id=message.sender_id if hasattr(message, 'sender_id') else None,
-                            sender_nick=message.sender_nick if hasattr(message, 'sender_nick') else None
+                            sender_id=sender_id_for_private,
+                            sender_nick=sender_nick_for_private
                         )
 
-                        # 为百度网盘消息发送单条通知
-                        self._send_single_message_notification(process_result)
+                        # 🔥 移除重复通知：第496行会统一发送所有消息类型的通知
 
                     else:
                         # 其他消息类型：使用 ProcessorRouter（钉钉文件/PDF链接只下载，不传输）
@@ -426,8 +458,8 @@ class FileTransferProcessor:
                                 skipped_count=0,
                                 total_size_mb=total_size / (1024 * 1024) if total_size else 0.0,
                                 metadata=router_result.metadata,  # 传递元数据（用于微信文章等信息）
-                                sender_id=message.sender_id if hasattr(message, 'sender_id') else None,
-                                sender_nick=message.sender_nick if hasattr(message, 'sender_nick') else None
+                                sender_id=sender_id_for_private,
+                                sender_nick=sender_nick_for_private
                             )
                         else:
                             status = "failed"
@@ -453,8 +485,8 @@ class FileTransferProcessor:
                                 skipped_count=0,
                                 total_size_mb=0.0,
                                 metadata=getattr(router_result, 'metadata', None),  # 安全获取元数据
-                                sender_id=message.sender_id if hasattr(message, 'sender_id') else None,
-                                sender_nick=message.sender_nick if hasattr(message, 'sender_nick') else None
+                                sender_id=sender_id_for_private,
+                                sender_nick=sender_nick_for_private
                             )
 
                     results.append(process_result)
@@ -481,7 +513,9 @@ class FileTransferProcessor:
                         status="failed",
                         message_type=message.message_type,
                         error_message=str(e),
-                        metadata=None  # 异常情况下没有元数据
+                        metadata=None,  # 异常情况下没有元数据
+                        sender_id=sender_id_for_private,
+                        sender_nick=sender_nick_for_private
                     )
 
                     results.append(error_result)
@@ -699,14 +733,36 @@ class FileTransferProcessor:
 
             content = "\n".join(content_lines)
 
-            # 发送通知
-            title = f"文件处理完成 - {result.folder_name}"
-            success = self.dingtalk_notifier.send_notification(title, content)
+            # 发送群聊webhook通知
+            # 🔥 优化：确保标题显示有意义的内容，避免"unknown"
+            display_name = result.folder_name if result.folder_name and result.folder_name.strip() else "文件"
+            title = f"文件处理完成 - {display_name}"
+            webhook_success = self.dingtalk_notifier.send_notification(title, content)
 
-            if success:
-                self.logger.info(f"Single message notification sent for {result.folder_name}")
+            if webhook_success:
+                self.logger.info(f"群聊通知发送成功: {result.folder_name}")
+
+                # 🔥 如果有发送者信息，用相同的内容发送私信
+                if hasattr(result, 'sender_id') and result.sender_id:
+                    self.logger.info(f"📤 准备发送私信给发送者: {result.sender_id}（复用webhook内容）")
+
+                    # 个性化称呼（如果需要）
+                    private_content = content
+                    if hasattr(result, 'sender_nick') and result.sender_nick:
+                        private_content = f"@{result.sender_nick} " + content
+
+                    private_success = self.dingtalk_notifier.send_private_message(
+                        user_id=result.sender_id,
+                        title=title,
+                        content=private_content
+                    )
+
+                    if private_success:
+                        self.logger.info(f"✅ 发送者私信发送成功: {result.sender_id}")
+                    else:
+                        self.logger.warning(f"⚠️ 发送者私信发送失败: {result.sender_id}")
             else:
-                self.logger.warning(f"Failed to send notification for {result.folder_name}")
+                self.logger.warning(f"群聊通知发送失败: {result.folder_name}")
 
             return success
 

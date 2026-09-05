@@ -241,6 +241,8 @@ class WxchatArticleProcessor:
         local_path = os.path.join(self.temp_dir, filename)
 
         self.logger.info(f"正在生成PDF: {filename}")
+        # 文章链接日志：INFO级，方便从日志直接定位下载的微信文章
+        self.logger.info(f"文章链接: {parse_result.wxchat_article_url or f'{self.pdf_generator.base_url}{article_id}'}")
         self.logger.debug(f"PDF生成参数 - article_id: {article_id}, local_path: {local_path}, temp_dir: {self.temp_dir}")
 
         try:
@@ -321,6 +323,11 @@ class WxchatArticleProcessor:
 
     def cleanup(self):
         """清理临时文件"""
+        # 关闭复用的浏览器会话（批次级复用，防微信风控）
+        try:
+            self.pdf_generator.close_browser()
+        except Exception as e:
+            self.logger.warning(f"关闭浏览器会话失败: {e}")
         if self.temp_dir and os.path.exists(self.temp_dir):
             try:
                 import shutil

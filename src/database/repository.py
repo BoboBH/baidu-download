@@ -1,11 +1,41 @@
 import pymysql
-from typing import List, Optional
+import json
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from src.database.models import FileTransferLog, ExecutionSummary
 from src.database.message_models import MessageProcessLog
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+def extract_sender_info(raw_message: Any) -> Tuple[Optional[str], Optional[str]]:
+    """
+    从raw_message中提取发送者信息
+
+    Args:
+        raw_message: 原始消息内容（可能是JSON字符串或字典）
+
+    Returns:
+        (sender_id, sender_nick) 元组
+    """
+    if not raw_message:
+        return None, None
+
+    # 如果是字符串，尝试解析为JSON
+    if isinstance(raw_message, str):
+        try:
+            raw_message = json.loads(raw_message)
+        except (json.JSONDecodeError, TypeError):
+            return None, None
+
+    # 如果是字典，提取sender信息 - 优先使用sender_staff_id
+    if isinstance(raw_message, dict):
+        # 优先使用sender_staff_id（钉钉userId格式）
+        sender_id = raw_message.get('sender_staff_id') or raw_message.get('sender_id')
+        sender_nick = raw_message.get('sender_nick')
+        return sender_id, sender_nick
+
+    return None, None
 
 class DatabaseRepository:
     """数据库操作仓库类"""
@@ -369,6 +399,9 @@ class DatabaseRepository:
             row = cursor.fetchone()
 
             if row:
+                # 从raw_message中提取sender信息
+                sender_id, sender_nick = extract_sender_info(row.get('raw_message'))
+
                 return MessageProcessLog(
                     id=row['id'],
                     message_hash=row['message_hash'],
@@ -380,8 +413,8 @@ class DatabaseRepository:
                     message_type=row.get('message_type', 'baidupan'),
                     raw_message=row.get('raw_message'),
                     file_info=row.get('file_info'),
-                    sender_id=row.get('sender_id'),
-                    sender_nick=row.get('sender_nick'),
+                    sender_id=sender_id,
+                    sender_nick=sender_nick,
                     process_status=row['process_status'],
                     error_message=row['error_message'],
                     execution_summary_id=row.get('execution_summary_id'),
@@ -423,6 +456,9 @@ class DatabaseRepository:
             row = cursor.fetchone()
 
             if row:
+                # 从raw_message中提取sender信息
+                sender_id, sender_nick = extract_sender_info(row.get('raw_message'))
+
                 return MessageProcessLog(
                     id=row['id'],
                     message_hash=row['message_hash'],
@@ -434,8 +470,8 @@ class DatabaseRepository:
                     message_type=row.get('message_type', 'baidupan'),
                     raw_message=row.get('raw_message'),
                     file_info=row.get('file_info'),
-                    sender_id=row.get('sender_id'),
-                    sender_nick=row.get('sender_nick'),
+                    sender_id=sender_id,
+                    sender_nick=sender_nick,
                     process_status=row['process_status'],
                     error_message=row['error_message'],
                     execution_summary_id=row.get('execution_summary_id'),

@@ -37,6 +37,7 @@ baidu-download.exe --link "分享链接" --code "提取码" --folder "目录名"
 ### 📱 功能专题文档
 - **[微信文章处理](docs/active/wxchat-article-usage.md)** - 微信文章PDF自动生成和归档 ⭐ 新功能
 - **[微信PDF处理](docs/wxchat_usage.md)** - 微信公众号文章PDF批量处理
+- **[微信反爬拦截事件档案与解决指南](docs/WECHAT_ANTICRAWL_INCIDENT_2026-09-05.md)** - 微信"环境异常"拦截的排查与解决（假PDF/验证cookie/一次性人工验证脚本）⚠️ 遇微信批量下载全失败先看这个
 - **[消息类型扩展](docs/active/MESSAGE_TYPE_EXTENSION_USER_GUIDE.md)** - 多消息类型支持指南
 
 ### 🔧 开发相关
