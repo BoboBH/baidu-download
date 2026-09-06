@@ -2,7 +2,7 @@
 单篇/小批量验证 --crawler-wxchat 爬虫源处理流程
 
 从 test 库 wechat_crawler_articles 取文章，走 WeChatArticleProcessor(source="crawler")
-完整流程：URL直连生成PDF -> 主SFTP + 外部SFTP双上传 -> crawler_wx_article 状态写入。
+完整流程：URL直连生成PDF -> 主SFTP + 外部SFTP双上传 -> wechat_crawler_article_status 状态写入。
 与 main.py --crawler-wxchat 唯一区别是不经过 main 的参数分发与钉钉报告。
 
 用法:
@@ -64,7 +64,7 @@ class FakeSFTPClient:
 
 
 def apply_skip_upload(processor: WeChatArticleProcessor):
-    """跳过真实上传与状态写入：避免测试数据污染 crawler_wx_article 去重表"""
+    """跳过真实上传与状态写入：避免测试数据污染 wechat_crawler_article_status 去重表"""
     wxchat_processor_module.SFTPClient = FakeSFTPClient
     processor._upload_to_external_sftp = lambda *args, **kwargs: True
 
@@ -72,7 +72,7 @@ def apply_skip_upload(processor: WeChatArticleProcessor):
         print(f"[SKIP-UPLOAD] 跳过状态写入: article_key={args[0]}")
 
     processor._update_article_status = fake_update_status
-    print(f"[SKIP-UPLOAD] 已启用：不连接SFTP、不写 crawler_wx_article，PDF副本在 {OUTPUT_DIR}")
+    print(f"[SKIP-UPLOAD] 已启用：不连接SFTP、不写 wechat_crawler_article_status，PDF副本在 {OUTPUT_DIR}")
 
 
 def parse_arguments():

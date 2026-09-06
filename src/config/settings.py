@@ -99,7 +99,7 @@ class Settings:
         self.wxchat_image_wait_time = self._get_int_env('WXCHAT_IMAGE_WAIT_TIME', default=20)
         self.wxchat_download_delay = self._get_int_env('WXCHAT_DOWNLOAD_DELAY', default=5)
         # 每篇文章处理后随机延时的上限秒数（实际延时在 [download_delay, download_delay_max] 内随机）
-        self.wxchat_download_delay_max = self._get_int_env('WXCHAT_DOWNLOAD_DELAY_MAX', default=50)
+        self.wxchat_download_delay_max = self._get_int_env('WXCHAT_DOWNLOAD_DELAY_MAX', default=10)
         # 浏览器持久化档案目录：保存微信验证后的cookie，供PDF生成浏览器复用以通过反爬
         self.wxchat_browser_profile = os.getenv('WXCHAT_BROWSER_PROFILE', './.wxchat_browser_profile')
         self.wxchat_max_days = self._get_int_env('WXCHAT_MAX_DAYS', default=30)

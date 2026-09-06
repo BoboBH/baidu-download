@@ -1,14 +1,14 @@
 -- ====================================================================
--- Migration: 014_create_crawler_wx_article.sql
+-- Migration: 014_create_wechat_crawler_article_status.sql
 -- Date: 2026-09-04
--- Description: 创建爬虫源微信文章处理状态表 crawler_wx_article
+-- Description: 创建爬虫源微信文章处理状态表 wechat_crawler_article_status
 --              服务 --crawler-wxchat 命令的去重与状态记录
 --              数据源表 wechat_crawler_articles/wechat_crawler_accounts
 --              属外部爬虫系统（只读），本表只记录本系统的处理状态，
 --              与源表无外键关联
 -- Prerequisites: database/wxchat_tables.sql（test 库）
 -- Order: 14
--- 执行方法: mysql -u root -p test < database/migrations/014_create_crawler_wx_article.sql
+-- 执行方法: mysql -u root -p test < database/migrations/014_create_wechat_crawler_article_status.sql
 -- 注意: 本表在主库 test（与 wxchat_tables.sql 同库），
 --       而 migrations 目录其他迁移默认 USE baidu_download，勿混淆
 -- ====================================================================
@@ -16,10 +16,10 @@
 USE test;
 
 -- ====================================================================
--- 变更: 创建 crawler_wx_article 表
+-- 变更: 创建 wechat_crawler_article_status 表
 -- ====================================================================
 
-CREATE TABLE IF NOT EXISTS crawler_wx_article (
+CREATE TABLE IF NOT EXISTS wechat_crawler_article_status (
     id INT AUTO_INCREMENT PRIMARY KEY,
     article_key VARCHAR(191) NOT NULL COMMENT '去重键=wechat_crawler_articles.dedup_key',
     crawler_article_id INT NOT NULL COMMENT 'wechat_crawler_articles.id（溯源用，不外键）',
@@ -44,9 +44,9 @@ COMMENT='爬虫源微信文章处理状态表（--crawler-wxchat）';
 -- 验证迁移结果
 -- ====================================================================
 
-DESCRIBE crawler_wx_article;
+DESCRIBE wechat_crawler_article_status;
 
 -- 预期结果:
--- crawler_wx_article 表创建成功，包含 uk_article_key 唯一键
+-- wechat_crawler_article_status 表创建成功，包含 uk_article_key 唯一键
 -- article_key 为去重主键，processed_at IS NOT NULL 表示处理成功
 -- ====================================================================

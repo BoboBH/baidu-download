@@ -447,7 +447,7 @@ def main() -> int:
                 return 1
 
             try:
-                # 前置检查：状态表 crawler_wx_article 是否已创建（014迁移），
+                # 前置检查：状态表 wechat_crawler_article_status 是否已创建（014迁移），
                 # 避免取数层吞掉缺表异常后静默按0篇处理
                 import pymysql
                 conn = pymysql.connect(
@@ -459,7 +459,7 @@ def main() -> int:
                 )
                 try:
                     with conn.cursor() as cursor:
-                        cursor.execute("SELECT 1 FROM crawler_wx_article LIMIT 1")
+                        cursor.execute("SELECT 1 FROM wechat_crawler_article_status LIMIT 1")
                 finally:
                     conn.close()
 
@@ -476,8 +476,8 @@ def main() -> int:
 
             except Exception as e:
                 if "1146" in str(e) or "doesn't exist" in str(e):
-                    logger.error(f"状态表 crawler_wx_article 不可用: {e}")
-                    logger.error("请先执行迁移: mysql -u root -p test < database/migrations/014_create_crawler_wx_article.sql")
+                    logger.error(f"状态表 wechat_crawler_article_status 不可用: {e}")
+                    logger.error("请先执行迁移: mysql -u root -p test < database/migrations/014_create_wechat_crawler_article_status.sql")
                 else:
                     logger.error(f"爬虫源微信文章处理失败: {e}", exc_info=True)
                 return 1

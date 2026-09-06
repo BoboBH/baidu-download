@@ -668,7 +668,7 @@ class WeChatArticleProcessor:
                         FROM wechat_crawler_articles a
                         LEFT JOIN wechat_crawler_accounts b ON b.id = a.account_id
                         -- 爬虫表为utf8mb4_0900_ai_ci、本系统状态表为utf8mb4_unicode_ci，显式COLLATE避免混合排序规则报错
-                        LEFT JOIN crawler_wx_article s ON s.article_key = a.dedup_key COLLATE utf8mb4_0900_ai_ci
+                        LEFT JOIN wechat_crawler_article_status s ON s.article_key = a.dedup_key COLLATE utf8mb4_0900_ai_ci
                         WHERE a.url IS NOT NULL AND a.url != ''
                           AND (%s IS NULL OR a.publish_date >= %s)
                           AND (s.article_key IS NULL OR s.retry_count = 0
@@ -878,7 +878,7 @@ class WeChatArticleProcessor:
         """
         # 按数据源选状态表：表名/列名为静态字符串，无注入风险
         if self.source == "crawler":
-            table, key_column = "crawler_wx_article", "article_key"
+            table, key_column = "wechat_crawler_article_status", "article_key"
         else:
             table, key_column = "new_wx_article", "article_id"
 
@@ -921,11 +921,11 @@ class WeChatArticleProcessor:
                     processed_at = datetime.now() if error_message is None else None
 
                     if self.source == "crawler":
-                        # crawler源：写入crawler_wx_article（不含外键，article为溯源快照）
+                        # crawler源：写入wechat_crawler_article_status（不含外键，article为溯源快照）
                         crawler_article_id = (article or {}).get('id', 0)
                         account_name = (article or {}).get('account_name') or str(account_id)
                         cursor.execute("""
-                            INSERT INTO crawler_wx_article (
+                            INSERT INTO wechat_crawler_article_status (
                                 article_key,
                                 crawler_article_id,
                                 account_id,
@@ -948,7 +948,7 @@ class WeChatArticleProcessor:
                                 pdf_url = VALUES(pdf_url),
                                 error_message = VALUES(error_message),
                                 processed_at = VALUES(processed_at),
-                                retry_count = IF(VALUES(processed_at) IS NULL, crawler_wx_article.retry_count + 1, 0),
+                                retry_count = IF(VALUES(processed_at) IS NULL, wechat_crawler_article_status.retry_count + 1, 0),
                                 updated_at = CURRENT_TIMESTAMP
                         """, (
                             article_id,

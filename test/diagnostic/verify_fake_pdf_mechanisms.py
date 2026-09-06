@@ -25,7 +25,7 @@ SCRATCH_ART = {'id': 999999, 'account_name': 'scratch'}
 def row_of(key):
     conn.commit()  # 结束当前事务，避免 REPEATABLE_READ 快照读到旧数据
     with conn.cursor() as cur:
-        cur.execute("SELECT processed_at, retry_count FROM crawler_wx_article WHERE article_key=%s", (key,))
+        cur.execute("SELECT processed_at, retry_count FROM wechat_crawler_article_status WHERE article_key=%s", (key,))
         return cur.fetchone()
 
 # ---- 1. retry_count increments on failure, resets on success ----
@@ -38,30 +38,40 @@ r = row_of(SCRATCH_KEY)
 check("success -> retry_count=0, processed", r[0] is not None and r[1] == 0, f"row={r}")
 
 # ---- 2. backoff filter in crawler fetch ----
+# 全量收割后爬虫表已无"无状态行"的文章，改为借用一条已处理状态行：
+# 快照原值 -> 模拟 fresh failure -> 验证退避 -> finally 恢复原值
 with conn.cursor() as cur:
-    cur.execute("""SELECT a.dedup_key FROM wechat_crawler_articles a
-                   LEFT JOIN crawler_wx_article s ON s.article_key = a.dedup_key COLLATE utf8mb4_0900_ai_ci
-                   WHERE s.article_key IS NULL AND a.url IS NOT NULL AND a.url != ''
-                   ORDER BY a.id LIMIT 1""")
-    free_key = cur.fetchone()[0]
+    cur.execute("""SELECT article_key, processed_at, retry_count, error_message, updated_at
+                   FROM wechat_crawler_article_status WHERE processed_at IS NOT NULL ORDER BY id LIMIT 1""")
+    snap = cur.fetchone()
+if not snap:
+    print("[FAIL] no processed row in wechat_crawler_article_status to borrow for backoff test")
+    sys.exit(1)
+bkey, b_proc, b_retry, b_err, b_upd = snap
 with conn.cursor() as cur:
-    cur.execute("""INSERT INTO crawler_wx_article (article_key, crawler_article_id, account_id, title,
-                   error_message, processed_at, retry_count, updated_at)
-                   VALUES (%s, 888888, 1, 'backoff-test', 'err', NULL, 2, NOW())""", (free_key,))
+    cur.execute("""UPDATE wechat_crawler_article_status SET processed_at=NULL, retry_count=2,
+                   error_message='backoff-test', updated_at=NOW() WHERE article_key=%s""", (bkey,))
 conn.commit()
-arts = proc._fetch_articles_from_crawler(None)
-in_list = any(a.get('dedup_key') == free_key for a in arts)
-check("failed(2x, just now) article EXCLUDED by backoff", not in_list, f"fetch={len(arts)}")
-with conn.cursor() as cur:
-    cur.execute("UPDATE crawler_wx_article SET updated_at = NOW() - INTERVAL 3 HOUR WHERE article_key=%s", (free_key,))
-conn.commit()
-arts = proc._fetch_articles_from_crawler(None)
-in_list = any(a.get('dedup_key') == free_key for a in arts)
-check("same article after 3h (2*20min=40min elapsed) INCLUDED", in_list, f"fetch={len(arts)}")
+try:
+    arts = proc._fetch_articles_from_crawler(None)
+    in_list = any(a.get('dedup_key') == bkey for a in arts)
+    check("failed(2x, just now) article EXCLUDED by backoff", not in_list, f"fetch={len(arts)}")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE wechat_crawler_article_status SET updated_at = NOW() - INTERVAL 3 HOUR WHERE article_key=%s", (bkey,))
+    conn.commit()
+    arts = proc._fetch_articles_from_crawler(None)
+    in_list = any(a.get('dedup_key') == bkey for a in arts)
+    check("same article after 3h (2*20min=40min elapsed) INCLUDED", in_list, f"fetch={len(arts)}")
+finally:
+    with conn.cursor() as cur:
+        cur.execute("""UPDATE wechat_crawler_article_status SET processed_at=%s, retry_count=%s,
+                       error_message=%s, updated_at=%s WHERE article_key=%s""",
+                    (b_proc, b_retry, b_err, b_upd, bkey))
+    conn.commit()
 
-# cleanup scratch rows
+# cleanup scratch row
 with conn.cursor() as cur:
-    cur.execute("DELETE FROM crawler_wx_article WHERE article_key IN (%s, %s)", (SCRATCH_KEY, free_key))
+    cur.execute("DELETE FROM wechat_crawler_article_status WHERE article_key = %s", (SCRATCH_KEY,))
 conn.commit()
 conn.close()
 

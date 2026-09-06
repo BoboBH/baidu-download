@@ -77,12 +77,17 @@ htmlcov/
 dist/
 build/
 *.spec
-!baidu_download.spec
+!baidu-download.spec
 !build_exe.bat
 !BUILD_README.md
 
 # Playwright持久化浏览器档案（含微信验证cookie，不入库）
 .wxchat_browser_profile/
+
+# Claude Code 本地工作产物（.claude/memory/ 项目记录保留入库）
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
 
 # 测试输出产物（探针截图等）
 output/

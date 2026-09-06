@@ -26,7 +26,7 @@ conn = pymysql.connect(host=settings.db_host, port=settings.db_port, user=settin
 KEY = 'https://mp.weixin.qq.com/s/10vhWjQ6-Fh3na5RfyfIDg'
 
 with conn.cursor() as cur:
-    cur.execute("UPDATE crawler_wx_article SET processed_at=NOW(), pdf_url='/fake/x.pdf', error_message=NULL "
+    cur.execute("UPDATE wechat_crawler_article_status SET processed_at=NOW(), pdf_url='/fake/x.pdf', error_message=NULL "
                 "WHERE article_key=%s", (KEY,))
 conn.commit()
 
@@ -87,11 +87,11 @@ check("crawler exit 0", rc == 0, f"(rc={rc})")
 
 # ---- 5. restore article 110 to real failed state (pending retry) ----
 with conn.cursor() as cur:
-    cur.execute("UPDATE crawler_wx_article SET processed_at=NULL, pdf_url=NULL, "
+    cur.execute("UPDATE wechat_crawler_article_status SET processed_at=NULL, pdf_url=NULL, "
                 "error_message='主SFTP上传失败' WHERE article_key=%s", (KEY,))
 conn.commit()
 with conn.cursor() as cur:
-    cur.execute("SELECT processed_at, error_message FROM crawler_wx_article WHERE article_key=%s", (KEY,))
+    cur.execute("SELECT processed_at, error_message FROM wechat_crawler_article_status WHERE article_key=%s", (KEY,))
     row = cur.fetchone()
 conn.close()
 check("row restored to pending-retry", row[0] is None and row[1] == '主SFTP上传失败')

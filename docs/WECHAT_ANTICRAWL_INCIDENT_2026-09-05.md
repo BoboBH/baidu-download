@@ -74,13 +74,13 @@
 
 ```sql
 -- mysql -u root -p test
-UPDATE crawler_wx_article
+UPDATE wechat_crawler_article_status
 SET retry_count = 1000000,
     error_message = CONCAT(error_message, ' | 用户指示：被微信标记，永久放弃重试')
 WHERE processed_at IS NULL AND retry_count >= 3;
 ```
 
-原理：取数条件 `NOW() >= updated_at + retry_count×20分钟`，retry_count=1000000 等效约190年退避。如需恢复某篇：`UPDATE crawler_wx_article SET retry_count=0, error_message=NULL WHERE article_key='<url>';`
+原理：取数条件 `NOW() >= updated_at + retry_count×20分钟`，retry_count=1000000 等效约190年退避。如需恢复某篇：`UPDATE wechat_crawler_article_status SET retry_count=0, error_message=NULL WHERE article_key='<url>';`
 
 ### 4.4 注意事项
 
@@ -89,7 +89,7 @@ WHERE processed_at IS NULL AND retry_count >= 3;
 - **不要删除 `.wxchat_browser_profile/`**，否则下次又需要人工验证
 - `poc_sid` 有有效期（微信侧控制，实测数天内有效）；若批量再次全部失败且日志出现"环境异常"，**重跑 4.1 即可**
 - 验证时弹出的是受控浏览器窗口，**在它里面完成滑块**，不要在自己日常 Chrome 里验证（cookie 不互通）
-- 长期预防：保持反限流配置（默认每篇随机暂停 20~50 秒），避免单次批量过多触发新一批风控
+- 长期预防：保持反限流配置（每篇随机暂停，2026-09-05 起为 5~10 秒），避免单次批量过多触发新一批风控
 
 ## 5. 配套防御机制（src/wxchat/processor.py）
 
@@ -100,9 +100,9 @@ WHERE processed_at IS NULL AND retry_count >= 3;
 | 假 PDF 检测 | `MIN_VALID_PDF_SIZE=100KB` | 生成后校验文件大小，拦截页不上传 |
 | 熔断 | `FAKE_PDF_CIRCUIT_BREAKER=5` | 连续 5 篇假 PDF → 判定风控，中止本次运行 |
 | 单次尝试 | （2026-09-05 起固定行为） | 一次运行内每篇只试 1 次，不运行内重试 |
-| 跨运行退避 | `RETRY_BACKOFF_MINUTES=20` | 失败 N 次需等 N×20 分钟才被再次扫描（retry_count 记账在 `crawler_wx_article` / `new_wx_article`） |
+| 跨运行退避 | `RETRY_BACKOFF_MINUTES=20` | 失败 N 次需等 N×20 分钟才被再次扫描（retry_count 记账在 `wechat_crawler_article_status` / `new_wx_article`） |
 | 前科文章垫底 | 取数 SQL `ORDER BY COALESCE(s.retry_count,0) ASC` | 有失败记录的文章排最后处理，避免开局撞墙 |
-| 随机延时 | `WXCHAT_DOWNLOAD_DELAY` / `WXCHAT_DOWNLOAD_DELAY_MAX`（默认 5/50，当前 20/50） | 每篇之间随机暂停，日志打印 `⏸️ 随机暂停 N 秒` |
+| 随机延时 | `WXCHAT_DOWNLOAD_DELAY` / `WXCHAT_DOWNLOAD_DELAY_MAX`（默认 5/10，当前 5/10） | 每篇之间随机暂停，日志打印 `⏸️ 随机暂停 N 秒` |
 | 持久化档案 | `WXCHAT_BROWSER_PROFILE`（默认 `./.wxchat_browser_profile`） | 保存验证 cookie，无头复用 |
 | 拟真参数 | 固定代码 | 系统 Chrome（channel=chrome）+ 隐藏 webdriver + 真实 UA |
 

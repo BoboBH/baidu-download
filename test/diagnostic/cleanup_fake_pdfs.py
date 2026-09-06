@@ -60,8 +60,8 @@ def clean(table, key_col):
         n += 1
     return n
 
-print("== crawler_wx_article ==")
-n1 = clean('crawler_wx_article', 'article_key')
+print("== wechat_crawler_article_status ==")
+n1 = clean('wechat_crawler_article_status', 'article_key')
 print(f"reset {n1} crawler rows")
 print("== new_wx_article ==")
 n2 = clean('new_wx_article', 'article_id')
