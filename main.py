@@ -102,6 +102,7 @@ def parse_arguments() -> argparse.Namespace:
   微信模式 - 爬虫源文章:
     python main.py --crawler-wxchat
     python main.py --crawler-wxchat --crawler-wxchat-days 7 --verbose
+        （回溯天数默认取WXCHAT_CRAWLER_DAYS配置，未配置时3天；0=不限时间窗处理所有未成功文章）
         '''
     )
 
@@ -209,7 +210,7 @@ def parse_arguments() -> argparse.Namespace:
         dest='crawler_wxchat_days',
         type=int,
         default=None,
-        help='爬虫源模式：只处理最近N天发布的文章（默认不限，处理所有未成功文章）'
+        help='爬虫源模式：只处理最近N天发布的文章（默认取WXCHAT_CRAWLER_DAYS配置，未配置时3天；0=不限时间窗，处理所有未成功文章）'
     )
 
     return parser.parse_args()
@@ -230,10 +231,16 @@ def _emit_wxchat_result(settings: Settings, result, report_title: str,
     """
     logger.info("=" * 60)
     logger.info(f"微信文章处理完成{source_label}！")
-    logger.info(f"总计文章: {result.total_articles} 篇")
-    logger.info(f"成功处理: {result.processed_articles} 篇")
-    logger.info(f"失败文章: {result.failed_articles} 篇")
-    logger.info(f"跳过文章: {result.skipped_articles} 篇")
+    if result.window_total > 0:
+        # 窗口口径：总数含已成功文章，跳过=已成功下载，本次处理=待处理尝试数
+        logger.info(f"窗口文章总数: {result.window_total} 篇")
+        logger.info(f"本次处理: {result.total_articles} 篇（成功 {result.processed_articles} / 失败 {result.failed_articles}）")
+        logger.info(f"跳过(已处理): {result.skipped_articles} 篇")
+    else:
+        logger.info(f"总计文章: {result.total_articles} 篇")
+        logger.info(f"成功处理: {result.processed_articles} 篇")
+        logger.info(f"失败文章: {result.failed_articles} 篇")
+        logger.info(f"跳过文章: {result.skipped_articles} 篇")
 
     if result.start_time and result.end_time:
         duration = (result.end_time - result.start_time).total_seconds()
@@ -256,9 +263,19 @@ def _emit_wxchat_result(settings: Settings, result, report_title: str,
         notifier = DingtalkNotifier(settings)
 
         # 构建报告消息
-        report_content = f"""## 微信文章处理完成报告{source_label}
+        if result.window_total > 0:
+            # 窗口口径：总数含已成功文章，跳过=已成功下载，本次处理=待处理尝试数
+            stats_content = f"""### 📈 处理统计
+- **窗口文章总数**: {scope_desc}共 {result.window_total} 篇
+- **🔨 本次处理**: {result.total_articles} 篇
+- **✅ 成功**: {result.processed_articles} 篇
+- **❌ 失败**: {result.failed_articles} 篇
+- **⏭️ 跳过(已处理)**: {result.skipped_articles} 篇
 
-### 📈 处理统计
+### ⏱️ 处理时间
+"""
+        else:
+            stats_content = f"""### 📈 处理统计
 - **总计文章**: {scope_desc}共 {result.total_articles} 篇
 - **✅ 成功处理**: {result.processed_articles} 篇
 - **❌ 失败文章**: {result.failed_articles} 篇
@@ -266,6 +283,9 @@ def _emit_wxchat_result(settings: Settings, result, report_title: str,
 
 ### ⏱️ 处理时间
 """
+        report_content = f"""## 微信文章处理完成报告{source_label}
+
+{stats_content}"""
 
         if result.start_time and result.end_time:
             duration = (result.end_time - result.start_time).total_seconds()
@@ -440,10 +460,12 @@ def main() -> int:
                 logger.error("请手动运行: pip install playwright && playwright install chromium")
                 return 1
 
-            # 校验天数参数（可选；提供时范围与--wxchat一致）
+            # 回溯天数：CLI > 环境配置 WXCHAT_CRAWLER_DAYS（默认3天）；0=不限时间窗（全部未成功文章）
             days = args.crawler_wxchat_days
-            if days is not None and (days < 1 or days > settings.wxchat_max_days):
-                logger.error(f"天数必须在 1 到 {settings.wxchat_max_days} 之间（不传则处理所有未成功文章）")
+            if days is None:
+                days = settings.wxchat_crawler_days
+            if days < 0 or days > settings.wxchat_max_days:
+                logger.error(f"天数必须在 0 到 {settings.wxchat_max_days} 之间（0=不限时间窗，处理所有未成功文章）")
                 return 1
 
             try:
@@ -464,9 +486,9 @@ def main() -> int:
                     conn.close()
 
                 processor = WeChatArticleProcessor(settings, source="crawler")
-                result = processor.process_articles(days=days)
+                result = processor.process_articles(days=None if days == 0 else days)
 
-                scope_desc = f"最近{days} 天" if days is not None else "全部未处理"
+                scope_desc = "全部未处理" if days == 0 else f"最近{days} 天"
                 return _emit_wxchat_result(
                     settings, result,
                     report_title="📊 微信文章处理报告（爬虫源）",

@@ -103,6 +103,8 @@ class Settings:
         # 浏览器持久化档案目录：保存微信验证后的cookie，供PDF生成浏览器复用以通过反爬
         self.wxchat_browser_profile = os.getenv('WXCHAT_BROWSER_PROFILE', './.wxchat_browser_profile')
         self.wxchat_max_days = self._get_int_env('WXCHAT_MAX_DAYS', default=30)
+        # 爬虫源（--crawler-wxchat）向前回溯天数：0=不限时间窗（处理所有未成功文章）
+        self.wxchat_crawler_days = self._get_int_env('WXCHAT_CRAWLER_DAYS', default=3)
 
         # 外部SFTP配置 (可选)
         self.wxchat_external_sftp_host = os.getenv('WXCHAT_EXTERNAL_SFTP_HOST', '')

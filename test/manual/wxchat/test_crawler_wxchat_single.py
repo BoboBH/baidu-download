@@ -96,9 +96,9 @@ def main() -> int:
     settings = Settings()
     processor = WeChatArticleProcessor(settings, source="crawler")
 
-    # 取数（与 main.py --crawler-wxchat 同一入口）
-    articles = processor._fetch_articles_from_crawler(args.days)
-    print(f"取到候选文章: {len(articles)} 篇 (days={args.days})")
+    # 取数（与 main.py --crawler-wxchat 同一入口；返回(待处理列表, 窗口总数)）
+    articles, window_total = processor._fetch_articles_from_crawler(args.days)
+    print(f"取到待处理文章: {len(articles)} 篇 / 窗口内共 {window_total} 篇 (days={args.days})")
 
     if args.url:
         articles = [a for a in articles if args.url in (a.get('url') or '')]

@@ -1,4 +1,4 @@
-"""去重验证：已成功文章重跑 process_articles 应 skipped，不重传、不报告。ASCII output only."""
+"""去重验证：已成功文章在拉取层即被过滤，不重传、不报告。ASCII output only."""
 import sys
 from pathlib import Path
 
@@ -14,11 +14,13 @@ KEY = 'https://mp.weixin.qq.com/s/10vhWjQ6-Fh3na5RfyfIDg'
 settings = Settings()
 proc = WeChatArticleProcessor(settings, source="crawler")
 
-target = [a for a in proc._fetch_articles_from_crawler(None) if a.get('dedup_key') == KEY]
-assert len(target) == 1, f"target article not found, got {len(target)}"
+pending, window_total = proc._fetch_articles_from_crawler(None)
+assert all(a.get('dedup_key') != KEY for a in pending), \
+    "dedup failed: success article still in pending list"
+print(f"OK: success article excluded from pending list (pending={len(pending)}, window={window_total})")
 
-# 关键：把过滤后的取数挂回 processor，否则 process_articles 会取全部文章
-proc._fetch_articles_from_crawler = lambda days=None: target
+# 关键：模拟"窗口内只有这一篇已成功文章"的取数，验证统计口径 skipped=1 且不重传、不发报告
+proc._fetch_articles_from_crawler = lambda days=None: ([], 1)
 
 # 拦截：若去重失效会走到 _process_single_article，这里直接判失败
 proc._process_single_article = lambda article: (_ for _ in ()).throw(

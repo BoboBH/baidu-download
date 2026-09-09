@@ -36,9 +36,9 @@ proc = WeChatArticleProcessor(settings, source="crawler")
 check("is_article_processed True after simulated success", proc._is_article_processed(KEY))
 
 # ---- 2. process_articles skips the deduped article (fetch patched to only that one) ----
-arts = proc._fetch_articles_from_crawler(None)
+arts, _wt = proc._fetch_articles_from_crawler(None)
 target = [a for a in arts if a.get('dedup_key') == KEY]
-proc._fetch_articles_from_crawler = lambda days=None: target
+proc._fetch_articles_from_crawler = lambda days=None: (target, len(target))
 result = proc.process_articles(days=None)
 check("process_articles skip count", result.skipped_articles == 1 and result.processed_articles == 0
       and result.failed_articles == 0 and result.total_articles == 1,

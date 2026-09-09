@@ -5,6 +5,7 @@
 import click
 import logging
 from src.config.settings import Settings
+from src.utils.logger import get_file_handler
 from src.wxchat.processor import WeChatAccountSync, WeChatArticleProcessor
 
 logger = logging.getLogger(__name__)
@@ -41,12 +42,12 @@ def register_commands(cli: click.Group):
                 click.echo("错误: 微信文章处理功能未启用，请在.env中设置WXCHAT_ENABLED=true")
                 return
 
-            # 配置日志
+            # 配置日志（文件按天+按大小滚动，最多保留7天，单文件不超过50MB）
             logging.basicConfig(
                 level=getattr(logging, config.log_level),
                 format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                 handlers=[
-                    logging.FileHandler(config.log_file, encoding='utf-8'),
+                    get_file_handler(config.log_file),
                     logging.StreamHandler()
                 ]
             )

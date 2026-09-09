@@ -39,6 +39,8 @@ class ProcessResult:
     processed_articles: int = 0
     failed_articles: int = 0
     skipped_articles: int = 0
+    # 时间窗内文章总数（含已成功跳过的）；0=本次运行无窗口统计（如wewe源）
+    window_total: int = 0
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     errors: list = None
@@ -54,6 +56,7 @@ class ProcessResult:
             'processed_articles': self.processed_articles,
             'failed_articles': self.failed_articles,
             'skipped_articles': self.skipped_articles,
+            'window_total': self.window_total,
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'end_time': self.end_time.isoformat() if self.end_time else None,
             'duration_seconds': (self.end_time - self.start_time).total_seconds() if self.start_time and self.end_time else 0,

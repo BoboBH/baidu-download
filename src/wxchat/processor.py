@@ -507,7 +507,10 @@ class WeChatArticleProcessor:
         try:
             # 获取文章列表
             if self.source == "crawler":
-                articles = self._fetch_articles_from_crawler(days)
+                articles, window_total = self._fetch_articles_from_crawler(days)
+                # 窗口统计：总数含已成功文章，差值即"跳过(已处理)"，供报告展示
+                result.window_total = window_total
+                result.skipped_articles = max(window_total - len(articles), 0)
             else:
                 # 计算时间范围
                 end_date = datetime.now()
@@ -633,15 +636,19 @@ class WeChatArticleProcessor:
             logger.error(f"获取文章列表失败: {e}")
             return []
 
-    def _fetch_articles_from_crawler(self, days: Optional[int] = None) -> List[Dict]:
+    def _fetch_articles_from_crawler(self, days: Optional[int] = None):
         """
-        从主库wechat_crawler_articles表获取爬虫源文章列表（只读，禁止写爬虫表）
+        从主库wechat_crawler_articles表获取爬虫源待处理文章列表（只读，禁止写爬虫表）
+
+        已成功下载（状态表processed_at非空）的文章在拆分逻辑中过滤，
+        不再进入处理循环；失败退避期内的文章同样暂不拉取。
 
         Args:
             days: 可选，只取最近N天（按publish_date）发布的文章；None表示全部
 
         Returns:
-            文章列表，含 id/dedup_key/url/title/publish_date/account_id/account_name
+            (待处理文章列表, 窗口内文章总数) 元组；
+            文章含 id/dedup_key/url/title/publish_date/account_id/account_name 及状态列
         """
         articles = []
 
@@ -652,10 +659,19 @@ class WeChatArticleProcessor:
 
             with DatabaseConnection(self.config, use_wewe_db=False) as conn:
                 with conn.cursor() as cursor:
+                    # 窗口内文章总数（只过滤空URL/无发布日期，不含处理状态），供统计"最近N天共多少篇/跳过多少已处理"
+                    cursor.execute("""
+                        SELECT COUNT(*) AS cnt
+                        FROM wechat_crawler_articles a
+                        WHERE a.url IS NOT NULL AND a.url != ''
+                          AND a.publish_date IS NOT NULL AND a.publish_date != ''
+                          AND (%s IS NULL OR a.publish_date >= %s)
+                    """, (start_date, start_date))
+                    window_total = cursor.fetchone()['cnt']
+
                     # publish_date为VARCHAR 'YYYY-MM-DD'，字典序比较即日期比较
                     # 只过滤空URL；url_status属于爬虫侧语义，此处不做过滤
-                    # 失败退避：失败retry_count次的文章需等 retry_count*20分钟 后才会被再次扫到
-                    # （processed_at IS NOT NULL的成功文章retry_count=0恒通过，去重仍由循环内判断）
+                    # 处理状态过滤与失败退避在 _split_pending_articles 中统一判断
                     cursor.execute("""
                         SELECT
                             a.id,
@@ -664,27 +680,65 @@ class WeChatArticleProcessor:
                             a.title,
                             a.publish_date,
                             a.account_id,
-                            b.name AS account_name
+                            b.name AS account_name,
+                            s.processed_at AS s_processed_at,
+                            s.retry_count AS s_retry_count,
+                            s.updated_at AS s_updated_at
                         FROM wechat_crawler_articles a
                         LEFT JOIN wechat_crawler_accounts b ON b.id = a.account_id
                         -- 爬虫表为utf8mb4_0900_ai_ci、本系统状态表为utf8mb4_unicode_ci，显式COLLATE避免混合排序规则报错
                         LEFT JOIN wechat_crawler_article_status s ON s.article_key = a.dedup_key COLLATE utf8mb4_0900_ai_ci
                         WHERE a.url IS NOT NULL AND a.url != ''
+                          AND a.publish_date IS NOT NULL AND a.publish_date != ''
                           AND (%s IS NULL OR a.publish_date >= %s)
-                          AND (s.article_key IS NULL OR s.retry_count = 0
-                               OR NOW() >= DATE_ADD(s.updated_at, INTERVAL s.retry_count * %s MINUTE))
                         -- 被风控标记过的文章（retry_count高）垫底，避免每轮开局就撞拦截页浪费额度
                         ORDER BY COALESCE(s.retry_count, 0) ASC, a.publish_date DESC, a.id DESC
-                    """, (start_date, start_date, RETRY_BACKOFF_MINUTES))
+                    """, (start_date, start_date))
 
                     articles = cursor.fetchall()
 
-            logger.info(f"从wechat_crawler_articles获取到 {len(articles)} 篇文章")
-            return articles
+            pending, window_total = self._split_pending_articles(articles)
+            logger.info(f"从wechat_crawler_articles获取到 {len(pending)} 篇待处理文章"
+                        f"（窗口内共 {window_total} 篇）")
+            return pending, window_total
 
         except Exception as e:
             logger.error(f"获取爬虫源文章列表失败: {e}")
-            return []
+            return [], 0
+
+    def _split_pending_articles(self, articles: List[Dict]):
+        """
+        将窗口内文章拆分为待处理与需跳过两类（纯逻辑，便于测试）
+
+        过滤规则：
+        - 发布日期缺失或无法解析 → 直接过滤（不进待处理，也不计入窗口总数）
+        - 状态表processed_at非空 → 已成功下载，跳过
+        - 失败退避期内（retry_count*20分钟未到期）→ 暂不拉取，下次运行再试
+
+        Args:
+            articles: 带状态列（s_processed_at/s_retry_count/s_updated_at）的文章列表
+
+        Returns:
+            (待处理文章列表, 窗口内文章总数) 元组
+        """
+        pending = []
+        window_total = 0
+        now = datetime.now()
+        for article in articles:
+            # 无发布日期的文章无法归档YYYYMM目录，直接过滤
+            if self._parse_publish_date(article.get('publish_date')) is None:
+                continue
+            window_total += 1
+            if article.get('s_processed_at') is not None:
+                continue  # 已成功下载，跳过
+            retry_count = article.get('s_retry_count') or 0
+            updated_at = article.get('s_updated_at')
+            if retry_count > 0 and updated_at is not None:
+                backoff = timedelta(minutes=retry_count * RETRY_BACKOFF_MINUTES)
+                if now < updated_at + backoff:
+                    continue  # 失败退避期内，暂不拉取
+            pending.append(article)
+        return pending, window_total
 
     def _parse_publish_date(self, raw: Optional[str]) -> Optional[datetime]:
         """

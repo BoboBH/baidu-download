@@ -53,13 +53,13 @@ with conn.cursor() as cur:
                    error_message='backoff-test', updated_at=NOW() WHERE article_key=%s""", (bkey,))
 conn.commit()
 try:
-    arts = proc._fetch_articles_from_crawler(None)
+    arts, _wt = proc._fetch_articles_from_crawler(None)
     in_list = any(a.get('dedup_key') == bkey for a in arts)
     check("failed(2x, just now) article EXCLUDED by backoff", not in_list, f"fetch={len(arts)}")
     with conn.cursor() as cur:
         cur.execute("UPDATE wechat_crawler_article_status SET updated_at = NOW() - INTERVAL 3 HOUR WHERE article_key=%s", (bkey,))
     conn.commit()
-    arts = proc._fetch_articles_from_crawler(None)
+    arts, _wt = proc._fetch_articles_from_crawler(None)
     in_list = any(a.get('dedup_key') == bkey for a in arts)
     check("same article after 3h (2*20min=40min elapsed) INCLUDED", in_list, f"fetch={len(arts)}")
 finally:
@@ -99,7 +99,7 @@ def blocked(self, article):
     self.last_pdf_blocked = True
     return False
 WeChatArticleProcessor._process_single_article = blocked
-proc3._fetch_articles_from_crawler = lambda days=None: [{'dedup_key': f'k{i}'} for i in range(6)]
+proc3._fetch_articles_from_crawler = lambda days=None: ([{'dedup_key': f'k{i}'} for i in range(6)], 6)
 proc3._is_article_processed = lambda key: False
 res = proc3.process_articles(days=None)
 check("circuit breaker aborts after 5 (6th untouched)", res.failed_articles == 5 and calls['n'] == 5,
