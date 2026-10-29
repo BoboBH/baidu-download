@@ -94,6 +94,8 @@ class Settings:
         self.wxchat_wewe_db_password = os.getenv('WXCHAT_WEWE_DB_PASSWORD', '')
         self.wxchat_wewe_db_name = os.getenv('WXCHAT_WEWE_DB_NAME', '')
         self.wxchat_sftp_remote_path = os.getenv('WXCHAT_SFTP_REMOTE_PATH', '/wxchat')
+        # 微信文章PDF上传目标：both=主SFTP+外部SFTP（默认），external=仅外部SFTP（外部客户）
+        self.wxchat_upload_target = os.getenv('WXCHAT_UPLOAD_TARGET', 'both').strip().lower()
         self.wxchat_base_url = os.getenv('WXCHAT_BASE_URL', 'https://mp.weixin.qq.com/s/')
         self.wxchat_pdf_timeout = self._get_int_env('WXCHAT_PDF_TIMEOUT', default=300)
         self.wxchat_image_wait_time = self._get_int_env('WXCHAT_IMAGE_WAIT_TIME', default=20)
@@ -209,6 +211,20 @@ class Settings:
                 raise ConfigError(f"WXCHAT_DOWNLOAD_DELAY_MAX must be between 1 and 300: {self.wxchat_download_delay_max}")
             if self.wxchat_max_days < 1 or self.wxchat_max_days > 365:
                 raise ConfigError(f"WXCHAT_MAX_DAYS must be between 1 and 365: {self.wxchat_max_days}")
+
+        # 验证微信文章上传目标（不依赖WXCHAT_ENABLED，两种数据源共用）
+        if self.wxchat_upload_target not in ('both', 'external'):
+            raise ConfigError(f"WXCHAT_UPLOAD_TARGET must be 'both' or 'external': {self.wxchat_upload_target}")
+        if self.wxchat_upload_target == 'external':
+            # 仅外部模式必须有完整外部SFTP配置，否则文章会无处上传
+            for key, value in (
+                ('WXCHAT_EXTERNAL_SFTP_HOST', self.wxchat_external_sftp_host),
+                ('WXCHAT_EXTERNAL_SFTP_USERNAME', self.wxchat_external_sftp_username),
+                ('WXCHAT_EXTERNAL_SFTP_PASSWORD', self.wxchat_external_sftp_password),
+                ('WXCHAT_EXTERNAL_SFTP_FOLDER', self.wxchat_external_sftp_folder),
+            ):
+                if not value:
+                    raise ConfigError(f"{key} is required when WXCHAT_UPLOAD_TARGET is 'external'")
 
     def _validate_feishu_config(self):
         """验证飞书配置的完整性（用于自动化模式）"""

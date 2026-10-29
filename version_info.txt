@@ -6,8 +6,8 @@
 
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 8, 0, 0),
-    prodvers=(1, 8, 0, 0),
+    filevers=(1, 9, 0, 0),
+    prodvers=(1, 9, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -21,14 +21,14 @@ VSVersionInfo(
       StringTable(
         u'040904B0',
         [StringStruct(u'CompanyName', u'baidu-download team'),
-        StringStruct(u'FileDescription', u'百度网盘PDF文件自动传输系统 - 日志滚动与爬虫源拉取优化'),
-        StringStruct(u'FileVersion', u'1.8.0'),
+        StringStruct(u'FileDescription', u'百度网盘PDF文件自动传输系统 - 微信文章PDF上传目标可配置'),
+        StringStruct(u'FileVersion', u'1.9.0'),
         StringStruct(u'InternalName', u'baidu-download'),
         StringStruct(u'LegalCopyright', u'Copyright © 2026 baidu-download team'),
         StringStruct(u'OriginalFilename', u'baidu-download.exe'),
         StringStruct(u'ProductName', u'Baidu Download Manager'),
-        StringStruct(u'ProductVersion', u'1.8.0'),
-        StringStruct(u'Comments', u'rolling log files (daily+50MB, 7-day retention); crawler-wxchat fetch-level dedup, configurable lookback days, window stats'),
+        StringStruct(u'ProductVersion', u'1.9.0'),
+        StringStruct(u'Comments', u'WXCHAT_UPLOAD_TARGET: wechat article PDF upload target configurable - external only (for external customers) or both main+external (default both, unchanged)'),
         StringStruct(u'LegalTrademarks', u'')])
       ]),
     VarFileInfo([VarStruct(u'Translation', [1033, 1200])])

@@ -4,7 +4,7 @@
 包含账号同步、文章处理、PDF生成等功能。
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import pymysql
 import random
 import time
@@ -841,59 +841,11 @@ class WeChatArticleProcessor:
             self.last_pdf_blocked = False
             logger.info(f"✅ PDF生成完成: {temp_pdf_path}")
 
-            # 上传到SFTP
+            # 上传到SFTP（WXCHAT_UPLOAD_TARGET分流：both=主+外部，external=仅外部客户）
             logger.info(f"   准备上传PDF到SFTP服务器...")
-            try:
-                with SFTPClient() as sftp:
-                    # 生成YYYYMM格式的目录（兼容wewe源完整时间与crawler源纯日期）
-                    publish_date_obj = self._parse_publish_date(publish_date)
-                    yymm = publish_date_obj.strftime('%Y%m')
-                    logger.info(f"   目标目录: {yymm}")
-
-                    # 获取账号名称用于文件命名（crawler源JOIN直接带出，wewe源查库）
-                    account_name = article.get('account_name') or self._get_account_name(account_id)
-                    logger.info(f"   账号名称: {account_name}")
-
-                    # 生成文件名：公众号名称_文章标题.pdf
-                    # 清理文件名中的非法字符
-                    safe_account_name = self._sanitize_filename(account_name)
-                    safe_title = self._sanitize_filename(title)
-                    remote_filename = f"{safe_account_name}_{safe_title}.pdf"
-                    logger.info(f"   文件名: {remote_filename}")
-
-                    # 生成远程路径：wxchat_sftp_remote_path/YYYYMM/文件名.pdf
-                    remote_dir = f"{self.config.wxchat_sftp_remote_path}/{yymm}"
-                    remote_path = f"{remote_dir}/{remote_filename}"
-                    logger.info(f"   远程路径: {remote_path}")
-
-                    # 上传文件到主SFTP
-                    logger.info(f"   开始上传到主SFTP服务器...")
-                    main_sftp_success = sftp.upload_file(temp_pdf_path, remote_path)
-                    if main_sftp_success:
-                        # 生成PDF URL
-                        pdf_url = f"{remote_dir}/{remote_filename}"
-                        logger.info(f"✅ 主SFTP上传成功: {pdf_url}")
-
-                        # 尝试上传到外部SFTP（如果配置了且不在排除列表中）
-                        logger.info(f"   尝试上传到外部SFTP...")
-                        external_sftp_success = self._upload_to_external_sftp(
-                            temp_pdf_path, safe_account_name, safe_title,
-                            yymm, account_name
-                        )
-
-                        # 检查两个SFTP上传是否都成功
-                        if not external_sftp_success:
-                            error_message = "外部SFTP上传失败"
-                            logger.error(f"⚠️  外部SFTP上传失败: {article_id}")
-                        else:
-                            logger.info(f"✅ 外部SFTP上传成功")
-                    else:
-                        error_message = "主SFTP上传失败"
-                        logger.error(f"❌ 主SFTP上传失败: {article_id}")
-
-            except Exception as e:
-                error_message = f"SFTP上传异常: {str(e)}"
-                logger.error(f"❌ SFTP上传异常: {e}")
+            pdf_url, error_message = self._upload_pdf(
+                temp_pdf_path, publish_date, account_id, title, article_id, article
+            )
 
             # 清理临时文件
             logger.info(f"   清理临时文件...")
@@ -1103,6 +1055,94 @@ class WeChatArticleProcessor:
         if len(filename) > 100:
             filename = filename[:100]
         return filename.strip('.')
+
+    def _upload_pdf(self, temp_pdf_path: str, publish_date: Optional[str], account_id: str,
+                    title: str, article_id: str, article: Optional[Dict]) -> Tuple[Optional[str], Optional[str]]:
+        """
+        按配置上传PDF到SFTP
+
+        WXCHAT_UPLOAD_TARGET=external 时仅上传外部SFTP（外部客户），不连主SFTP；
+        默认both时保持原有行为：主SFTP成功后再传外部SFTP。
+
+        Args:
+            temp_pdf_path: 本地临时PDF文件路径
+            publish_date: 发布日期（用于YYYYMM目录）
+            account_id: 账号ID（wewe源查库名称用）
+            title: 文章标题
+            article_id: 去重键（仅用于日志）
+            article: 原始文章信息（crawler源带account_name）
+
+        Returns:
+            (pdf_url, error_message)：成功时error_message为None
+        """
+        pdf_url = None
+        error_message = None
+        try:
+            # 生成YYYYMM格式的目录（兼容wewe源完整时间与crawler源纯日期）
+            publish_date_obj = self._parse_publish_date(publish_date)
+            yymm = publish_date_obj.strftime('%Y%m')
+            logger.info(f"   目标目录: {yymm}")
+
+            # 获取账号名称用于文件命名（crawler源JOIN直接带出，wewe源查库）
+            account_name = (article or {}).get('account_name') or self._get_account_name(account_id)
+            logger.info(f"   账号名称: {account_name}")
+
+            # 生成文件名：公众号名称_文章标题.pdf
+            # 清理文件名中的非法字符
+            safe_account_name = self._sanitize_filename(account_name)
+            safe_title = self._sanitize_filename(title)
+            remote_filename = f"{safe_account_name}_{safe_title}.pdf"
+            logger.info(f"   文件名: {remote_filename}")
+
+            if self.config.wxchat_upload_target == 'external':
+                # 仅上传外部SFTP（外部客户），不连主SFTP
+                logger.info(f"   上传模式: 仅外部SFTP（跳过主SFTP）...")
+                if self._upload_to_external_sftp(
+                        temp_pdf_path, safe_account_name, safe_title, yymm, account_name):
+                    # 与_upload_to_external_sftp内部的远程路径规则保持一致
+                    pdf_url = f"{self.config.wxchat_external_sftp_folder}/{yymm}/{remote_filename}"
+                    logger.info(f"✅ 外部SFTP上传成功: {pdf_url}")
+                else:
+                    error_message = "外部SFTP上传失败"
+                    logger.error(f"❌ 外部SFTP上传失败: {article_id}")
+                return pdf_url, error_message
+
+            with SFTPClient() as sftp:
+                # 生成远程路径：wxchat_sftp_remote_path/YYYYMM/文件名.pdf
+                remote_dir = f"{self.config.wxchat_sftp_remote_path}/{yymm}"
+                remote_path = f"{remote_dir}/{remote_filename}"
+                logger.info(f"   远程路径: {remote_path}")
+
+                # 上传文件到主SFTP
+                logger.info(f"   开始上传到主SFTP服务器...")
+                main_sftp_success = sftp.upload_file(temp_pdf_path, remote_path)
+                if main_sftp_success:
+                    # 生成PDF URL
+                    pdf_url = f"{remote_dir}/{remote_filename}"
+                    logger.info(f"✅ 主SFTP上传成功: {pdf_url}")
+
+                    # 尝试上传到外部SFTP（如果配置了且不在排除列表中）
+                    logger.info(f"   尝试上传到外部SFTP...")
+                    external_sftp_success = self._upload_to_external_sftp(
+                        temp_pdf_path, safe_account_name, safe_title,
+                        yymm, account_name
+                    )
+
+                    # 检查两个SFTP上传是否都成功
+                    if not external_sftp_success:
+                        error_message = "外部SFTP上传失败"
+                        logger.error(f"⚠️  外部SFTP上传失败: {article_id}")
+                    else:
+                        logger.info(f"✅ 外部SFTP上传成功")
+                else:
+                    error_message = "主SFTP上传失败"
+                    logger.error(f"❌ 主SFTP上传失败: {article_id}")
+
+        except Exception as e:
+            error_message = f"SFTP上传异常: {str(e)}"
+            logger.error(f"❌ SFTP上传异常: {e}")
+
+        return pdf_url, error_message
 
     def _upload_to_external_sftp(self, local_pdf_path: str, safe_account_name: str,
                                  safe_title: str, yymm: str, original_account_name: str) -> bool:
